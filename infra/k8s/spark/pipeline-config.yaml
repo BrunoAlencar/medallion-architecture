@@ -1,0 +1,23 @@
+# Non-secret Pipeline settings (credentials come from the medallion-credentials Secret).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: processing
+data:
+  S3_ENDPOINT: http://seaweedfs-s3.data.svc.cluster.local:8333
+  BRONZE_PATH: s3a://bronze/topics/cdc.app.users
+  CDC_TOPIC: cdc.app.users
+  ICEBERG_CATALOG: lakehouse
+  ICEBERG_REST_URI: http://lakekeeper.data.svc.cluster.local:8181/catalog
+  ICEBERG_WAREHOUSE: medallion
+  SILVER_NAMESPACE: silver
+  STARROCKS_FE_HOST: starrocks-fe-service.data.svc.cluster.local
+  STARROCKS_QUERY_PORT: "9030"
+  STARROCKS_HTTP_PORT: "8030"
+  STARROCKS_USER: pipeline
+  MONGO_URI: mongodb://mongo-0.mongo.data.svc.cluster.local:27017/?replicaSet=rs0
+  MONGO_DB: app
+  MONGO_COLLECTION: users
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318
+  OTEL_SERVICE_NAME: medallion-pipeline

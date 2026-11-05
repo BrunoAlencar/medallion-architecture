@@ -1,0 +1,185 @@
+<section class="module" id="module-4" style="background: var(--color-bg)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">04</span>
+      <h1 class="module-title">Inside the Pipeline</h1>
+      <p class="module-subtitle">One PySpark Pipeline does all the transformation work, and it runs right inside your local Kubernetes cluster.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">A moving company that only exists during the move</h2>
+        <p>A moving company sends a <strong>foreman</strong> who plans the job and a <strong>crew</strong> who carry boxes. When the truck is unloaded, everyone goes home. Nobody sits in your house waiting for the next move.</p>
+        <p>A Spark run on <span class="term" data-definition="Kubernetes is a system that runs and supervises containers (packaged programs) across machines. kind runs a small one on your laptop; EKS is Amazon's managed version.">Kubernetes</span> works exactly like that.</p>
+        <div class="flow-steps">
+          <div class="flow-step"><div class="flow-step-num">🎛️</div><p><strong>Spark Operator</strong><br>The dispatcher: sees a job request and sends a team</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🧑‍💼</div><p><strong>Driver pod</strong><br>The foreman: plans the work and splits it into tasks</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">👷</div><p><strong>Executor pods</strong><br>The crew: do the tasks in parallel</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🏁</div><p><strong>Done</strong><br>All pods are removed; memory is freed</p></div>
+        </div>
+        <p>A <span class="term" data-definition="A pod is the smallest unit Kubernetes runs: one or more containers that start, stop and share resources together.">pod</span> is one running container. Because the crew leaves after every run, Spark only uses your Mac's memory while it is actually working.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">How you ask for a run</h2>
+        <p>You don't start Spark by hand. You hand Kubernetes a description of the job, and the Spark Operator makes it happen. A <strong>design sketch</strong>:</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line"><span class="code-property">kind</span>: SparkApplication</span>
+<span class="code-line"><span class="code-property">spec</span>:</span>
+<span class="code-line">  <span class="code-property">type</span>: Python</span>
+<span class="code-line">  <span class="code-property">image</span>: medallion/spark:dev</span>
+<span class="code-line">  <span class="code-property">imagePullPolicy</span>: Never</span>
+<span class="code-line">  <span class="code-property">mainApplicationFile</span>: <span class="code-string">local:///opt/app/bronze_to_silver.py</span></span>
+<span class="code-line">  <span class="code-property">driver</span>:   { <span class="code-property">cores</span>: <span class="code-number">1</span>, <span class="code-property">memory</span>: <span class="code-string">"1g"</span> }</span>
+<span class="code-line">  <span class="code-property">executor</span>: { <span class="code-property">instances</span>: <span class="code-number">1</span>, <span class="code-property">memory</span>: <span class="code-string">"1g"</span> }</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">"I want a Spark job," as a <span class="term" data-definition="A Kubernetes resource is a YAML description of something you want to exist. An operator watches these descriptions and makes reality match them.">Kubernetes resource</span>.</p>
+              <p class="tl">Here are the details:</p>
+              <p class="tl">It's written in Python, so <span class="term" data-definition="PySpark is the Python way of writing Apache Spark jobs.">PySpark</span>.</p>
+              <p class="tl">Use our own <span class="term" data-definition="A container image is a packaged, ready-to-run copy of a program and everything it needs (Python, Spark, extra libraries, our .py files).">container image</span>, with Spark, Iceberg, the StarRocks connector and our code inside.</p>
+              <p class="tl">Don't download it from the internet: kind already has it (we copied it in with <code>kind load</code>).</p>
+              <p class="tl">Which script to run.</p>
+              <p class="tl">The foreman gets 1 CPU and 1 GB of memory…</p>
+              <p class="tl">…and one crew member with 1 GB. Small on purpose: the whole platform has to fit in 16 GB.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">One run, three steps</h2>
+        <div class="step-cards">
+          <div class="step-card"><div class="step-num">1</div><div class="step-body"><strong>bronze_to_silver</strong><p>Read only the bronze files beyond the High-Water Mark, pick the winning event per user, MERGE into the Iceberg silver table, then move the bookmark forward.</p></div></div>
+          <div class="step-card"><div class="step-num">2</div><div class="step-body"><strong>checks</strong><p>Data checks on silver: every <code>user_id</code> unique and present, every <code>status</code> one of active, inactive or suspended. If any check fails, the run stops here.</p></div></div>
+          <div class="step-card"><div class="step-num">3</div><div class="step-body"><strong>silver_to_gold</strong><p>Build the three Gold Metrics and publish them to StarRocks, all at once, so readers never see a half-built table.</p></div></div>
+        </div>
+        <div class="arch-diagram">
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Where each layer lives (click)</h4>
+            <div class="arch-component" data-desc="Bronze: Parquet files in the bronze bucket, written by the Aiven sink. Spark reads them directly."><div class="arch-icon">🥉</div><span>Bronze = Parquet files</span></div>
+            <div class="arch-component" data-desc="Silver: an Apache Iceberg table in the silver bucket, catalogued by Lakekeeper. Iceberg is an open format, so other engines (Athena, Trino, StarRocks) could read it too."><div class="arch-icon">🧊</div><span>Silver = Iceberg</span></div>
+            <div class="arch-component" data-desc="Gold: native StarRocks tables in the database gold. Fast to query for dashboards and, later, an AI assistant through MCP."><div class="arch-icon">🥇</div><span>Gold = StarRocks</span></div>
+          </div>
+          <div class="arch-description">Click any layer to see where it lives and why</div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Publishing gold without a "half-built" moment</h2>
+        <p>The StarRocks connector for Spark can only <em>add</em> rows; it can't replace a table. So the Pipeline builds a hidden copy, then swaps it in. A <strong>design sketch</strong>:</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH · silver_to_gold.py</span>
+<pre><code><span class="code-line">df = (spark.table(<span class="code-string">"lake.silver.users"</span>)</span>
+<span class="code-line">      .where(~F.col(<span class="code-string">"is_deleted"</span>))</span>
+<span class="code-line">      .groupBy(<span class="code-string">"country"</span>, <span class="code-string">"status"</span>)</span>
+<span class="code-line">      .agg(F.count(<span class="code-string">"*"</span>).alias(<span class="code-string">"users"</span>)))</span>
+<span class="code-line">write_staging(df, <span class="code-string">"gold.users_by_country_stg"</span>)</span>
+<span class="code-line">swap(<span class="code-string">"users_by_country"</span>, <span class="code-string">"users_by_country_stg"</span>)</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">Load silver into a <span class="term" data-definition="A DataFrame is Spark's table-in-progress: rows and named columns you transform step by step with code.">DataFrame</span>.</p>
+              <p class="tl">Skip Deleted Users (this metric is about current users).</p>
+              <p class="tl">Group by country and status…</p>
+              <p class="tl">…and count.</p>
+              <p class="tl">Write the result into a hidden staging table in StarRocks.</p>
+              <p class="tl">Swap staging and live gold in one step (<code>ALTER TABLE … SWAP WITH</code>). Readers see the old version, then the new one, never anything in between.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-accent">
+          <div class="callout-icon">💡</div>
+          <div class="callout-content">
+            <strong class="callout-title">Build aside, then swap</strong>
+            <p>Building the new version next to the old one and switching over in one move is called an <em>atomic swap</em>. It's the same idea as blue/green deployments. When AI writes code that replaces data people are reading, ask: "is the switch-over atomic, or will readers see an empty table?"</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">What we keep, and what we gave up</h2>
+        <p>dbt was dropped (ADR-0005), so a few things it would have given us for free are now our job:</p>
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-5)">
+            <div class="pattern-icon" style="background: var(--color-actor-5)">✅</div>
+            <h4 class="pattern-title">Data checks</h4>
+            <p class="pattern-desc">Written in PySpark (<code>checks.py</code>) instead of dbt tests. A failed check fails the run, and gold keeps its previous version.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+            <div class="pattern-icon" style="background: var(--color-actor-3)">🧪</div>
+            <h4 class="pattern-title"><span class="term" data-definition="Unit tests are small automated checks of one piece of logic on tiny made-up data, e.g. 'given these three events for Ana, the newest one wins'.">Unit tests</span></h4>
+            <p class="pattern-desc">pytest with a local Spark session: Event Position winner, delete is final, replay ignored, New Attribute flattening.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+            <div class="pattern-icon" style="background: var(--color-actor-4)">🗺️</div>
+            <h4 class="pattern-title"><span class="term" data-definition="Lineage is the map of which table is built from which, so you can see what breaks if something upstream changes.">Lineage</span></h4>
+            <p class="pattern-desc">No automatic graph anymore. Run traces (module 5) and the README show which step builds which table.</p>
+          </div>
+        </div>
+        <p>And the New Attribute promise still stands: when the app starts sending <code>phone</code>, silver gains a <code>phone</code> column with <strong>zero code changes</strong>. It's one of the spikes to prove first.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Apply it</h2>
+        <div class="quiz-container" id="quiz-module4">
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Exactly. The swap never happened, so dashboards keep showing yesterday's (correct) gold. A failed run should leave readers with stale-but-right data, never fresh-but-wrong data."
+               data-explanation-wrong="Remember the order: checks run before gold is swapped in. What does that mean for readers when a check fails?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>At 3 am a data check fails: two silver rows share the same <code>user_id</code>. What do people querying gold in StarRocks see in the morning?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Gold with the duplicate counted twice</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The previous version of gold, unchanged. The run stopped before the swap</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Empty gold tables until someone fixes it</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="a"
+               data-explanation-right="Right. Executors are the workers, so the fix is a bigger executor (or more of them) in the SparkApplication. And check the 16 GB budget, since every extra GB comes from something else."
+               data-explanation-wrong="'OOMKilled' means Kubernetes stopped a pod for using more memory than it was allowed. Which part of the job description sets that limit?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>After a busy day, bronze_to_silver fails and Kubernetes shows the executor pod as <code>OOMKilled</code>. What do you ask your AI to change?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Raise the executor memory (or instances) in the SparkApplication, within the Docker memory budget</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Give MongoDB more memory</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Delete old bronze files so there's less to read</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Yes. A new Gold Metric is built from silver, so it belongs in silver_to_gold (with its own staging and swap), plus a check if it has rules. Silver and bronze don't change."
+               data-explanation-wrong="Think about which layer a business summary is built from, and which step builds that layer.">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Marketing wants a new gold table: users per city. Where should the change go?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>In the Debezium connector config</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>In bronze_to_silver, next to the MERGE</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>In silver_to_gold: build it from silver, write to staging, swap it in</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module4')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module4')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>

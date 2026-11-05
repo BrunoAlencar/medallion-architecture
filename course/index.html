@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Medallion CDC, Explained</title>
+
+  <!-- Google Fonts: Bricolage Grotesque · DM Sans · JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400;1,9..40,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css">
+
+  <!--
+    CUSTOMIZE PER COURSE — change only the three accent variables below.
+    Options:
+      vermillion  #D94F30 / #C4432A / #FDEEE9 / #E8836C  (default)
+      coral       #E06B56 / #C85A47 / #FDECEA / #E89585
+      teal        #2A7B9B / #1F6280 / #E4F2F7 / #5A9DB8
+      amber       #D4A843 / #BF9530 / #FDF5E0 / #E0C070
+      forest      #2D8B55 / #226B41 / #E8F5EE / #5AAD7A
+  -->
+  <style>
+    :root {
+      --color-accent:       #2A7B9B;
+      --color-accent-hover: #1F6280;
+      --color-accent-light: #E4F2F7;
+      --color-accent-muted: #5A9DB8;
+    }
+  </style>
+
+  <script src="main.js" defer></script>
+</head>
+<body>
+
+  <nav class="nav" id="nav">
+    <div class="progress-bar" id="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+    <div class="nav-inner">
+      <span class="nav-title">Medallion CDC, Explained</span>
+      <div class="nav-dots" id="nav-dots" role="tablist">
+        <!--
+          One <button> per module. Replace MODULE_N_NAME with the actual module title.
+
+          <button class="nav-dot" data-target="module-1" data-tooltip="MODULE_1_NAME" role="tab" aria-label="Module 1: MODULE_1_NAME"></button>
+          <button class="nav-dot" data-target="module-2" data-tooltip="MODULE_2_NAME" role="tab" aria-label="Module 2: MODULE_2_NAME"></button>
+          ...
+        -->
+        <button class="nav-dot" data-target="module-1" data-tooltip="One change, end to end" role="tab" aria-label="Module 1: One change, end to end"></button>
+        <button class="nav-dot" data-target="module-2" data-tooltip="Meet the cast" role="tab" aria-label="Module 2: Meet the cast"></button>
+        <button class="nav-dot" data-target="module-3" data-tooltip="Who wins? Order, replays, deletes" role="tab" aria-label="Module 3: Who wins? Order, replays, deletes"></button>
+        <button class="nav-dot" data-target="module-4" data-tooltip="Inside the Pipeline" role="tab" aria-label="Module 4: Inside the Pipeline"></button>
+        <button class="nav-dot" data-target="module-5" data-tooltip="Watching it run" role="tab" aria-label="Module 5: Watching it run"></button>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main">
+    <!-- modules/*.html content is assembled here by build.sh -->
+<section class="module" id="module-1" style="background: var(--color-bg-warm)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">01</span>
+      <h1 class="module-title">One change, end to end</h1>
+      <p class="module-subtitle">What this platform is for, told through the story of one person changing their email address.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">What are we building?</h2>
+        <p>Somewhere there is an app with users. Its
+          <span class="term" data-definition="A database is an organised place where an app stores its information permanently, like a giant, searchable filing cabinet.">database</span>,
+          <span class="term" data-definition="MongoDB is a popular database that stores each record as a flexible 'document', a bit like a JSON file, instead of rows in a rigid table.">MongoDB</span>, is busy serving that app, so it is not the place to run heavy reports.</p>
+        <p>This project copies every change from that database into a separate
+          <span class="term" data-definition="A lakehouse is a data platform that keeps huge amounts of data as files in cheap cloud storage (the 'lake') but lets you query it like a tidy database (the 'house').">lakehouse</span>,
+          cleans it up in stages, and produces business numbers like "signups per day". The stages are called bronze, silver and gold. That three-stage pattern is the
+          <span class="term" data-definition="Medallion architecture is a way of organising data in three layers: bronze (raw, untouched), silver (cleaned, one current version of each thing) and gold (business-ready summaries).">medallion architecture</span>.</p>
+
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+            <div class="pattern-icon" style="background: var(--color-actor-4)">🥉</div>
+            <h4 class="pattern-title">Bronze</h4>
+            <p class="pattern-desc">Every change, exactly as it happened. Never edited, never deleted. Only ever appended to.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+            <div class="pattern-icon" style="background: var(--color-actor-2)">🥈</div>
+            <h4 class="pattern-title">Silver</h4>
+            <p class="pattern-desc">One row per user, showing their <em>current</em> state. Duplicates removed, deletes flagged.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+            <div class="pattern-icon" style="background: var(--color-actor-1)">🥇</div>
+            <h4 class="pattern-title">Gold</h4>
+            <p class="pattern-desc">Summaries a business person asks for: users by country, daily signups, users per status.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">The bank-statement way of thinking</h2>
+        <p>Your bank keeps a <strong>statement</strong> (every single transaction, forever), shows you a <strong>balance</strong> (where you stand right now) and sends a <strong>yearly summary</strong> (spending by category). That is bronze, silver and gold.</p>
+        <div class="flow-steps">
+          <div class="flow-step"><div class="flow-step-num">🥉</div><p><strong>Statement</strong><br>+50, −20, +100… every line kept</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🥈</div><p><strong>Balance</strong><br>"You have 130 right now"</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🥇</div><p><strong>Summary</strong><br>"You spent 40% on food"</p></div>
+        </div>
+        <div class="callout callout-accent">
+          <div class="callout-icon">💡</div>
+          <div class="callout-content">
+            <strong class="callout-title">Why keep the raw statement at all?</strong>
+            <p>If the balance is ever wrong, say from a bug in the cleaning code, you can rebuild it from the statement. Keeping an untouched, append-only history is what makes every later layer <em>re-buildable</em>. When you brief an AI, say "bronze is append-only, never mutate it".</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Follow Ana's email change</h2>
+        <p>Ana changes her email in the app. Click through to watch that single change travel all the way to gold.</p>
+
+        <div class="flow-animation" data-steps='[
+          {"highlight":"flow-m1a1","label":"Ana changes her email. MongoDB writes it and records the change in its oplog (its internal diary of every write)."},
+          {"highlight":"flow-m1a2","label":"Debezium is reading that diary. It turns the write into a Change Event (op = u, for update).","packet":true,"from":"m1a1","to":"m1a2"},
+          {"highlight":"flow-m1a3","label":"The Change Event is published to a Kafka topic, keyed by Ana&apos;s user id.","packet":true,"from":"m1a2","to":"m1a3"},
+          {"highlight":"flow-m1a4","label":"A sink connector batches events into a Parquet file and drops it in the bronze bucket. Appended, never rewritten.","packet":true,"from":"m1a3","to":"m1a4"},
+          {"highlight":"flow-m1a5","label":"A Pipeline run reads only new files, picks the winning event for Ana and updates her one row in silver.","packet":true,"from":"m1a4","to":"m1a5"},
+          {"highlight":"flow-m1a6","label":"Gold tables are rebuilt from silver and land in StarRocks, where dashboards and AI tools can query them.","packet":true,"from":"m1a5","to":"m1a6"}
+        ]'>
+          <div class="flow-actors">
+            <div class="flow-actor" id="flow-m1a1"><div class="flow-actor-icon">🍃</div><span>MongoDB</span></div>
+            <div class="flow-actor" id="flow-m1a2"><div class="flow-actor-icon">👂</div><span>Debezium</span></div>
+            <div class="flow-actor" id="flow-m1a3"><div class="flow-actor-icon">📬</div><span>Kafka</span></div>
+            <div class="flow-actor" id="flow-m1a4"><div class="flow-actor-icon">🥉</div><span>Bronze</span></div>
+            <div class="flow-actor" id="flow-m1a5"><div class="flow-actor-icon">🥈</div><span>Silver</span></div>
+            <div class="flow-actor" id="flow-m1a6"><div class="flow-actor-icon">🥇</div><span>Gold</span></div>
+          </div>
+          <div class="flow-packet"></div>
+          <div class="flow-step-label">Click "Next Step" to begin</div>
+          <div class="flow-controls">
+            <button class="btn flow-next-btn">Next Step</button>
+            <button class="btn flow-reset-btn">Restart</button>
+            <span class="flow-progress"></span>
+          </div>
+        </div>
+
+        <p>That whole technique, copying every change out of a database as it happens, is called
+          <span class="term" data-definition="CDC (Change Data Capture) means watching a database for every insert, update and delete and sending each one somewhere else as an event, instead of copying the whole table over and over.">CDC</span>
+          (Change Data Capture).</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">What a Change Event actually looks like</h2>
+        <p>This is a <strong>design sketch</strong>, not code from the repo yet (nothing is built). It shows the shape of one event Debezium produces for Ana.</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line">{</span>
+<span class="code-line">  <span class="code-property">"op"</span>: <span class="code-string">"u"</span>,</span>
+<span class="code-line">  <span class="code-property">"after"</span>: <span class="code-string">"{\"_id\":\"66a1…\",\"email\":\"ana@new.com\",\"status\":\"active\"}"</span>,</span>
+<span class="code-line">  <span class="code-property">"source"</span>: { <span class="code-property">"ts_ms"</span>: <span class="code-number">1762370000123</span>, <span class="code-property">"ord"</span>: <span class="code-number">4</span> },</span>
+<span class="code-line">  <span class="code-property">"offset"</span>: <span class="code-number">8812</span></span>
+<span class="code-line">}</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">One event, wrapped in curly braces (that's <span class="term" data-definition="JSON is a plain-text format for structured data: names in quotes, followed by values, wrapped in curly braces. Almost every system can read and write it.">JSON</span>).</p>
+              <p class="tl">What happened: <code>u</code> = update. Others are <code>c</code> create, <code>d</code> delete, <code>r</code> read during the first snapshot.</p>
+              <p class="tl">The whole user document <em>after</em> the change, packed as text. New fields can appear here without breaking anything.</p>
+              <p class="tl">When it happened (milliseconds) and its order within that moment. Module 3 is all about these two numbers.</p>
+              <p class="tl">Its position in the Kafka queue. Used to remember "how far have I read?"</p>
+              <p class="tl">End of the event.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Check your understanding</h2>
+        <div class="quiz-container" id="quiz-module1">
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Exactly. Bronze still holds every change exactly as it arrived, so you fix the code and rebuild silver from it. That is the whole point of an append-only raw layer."
+               data-explanation-wrong="Not quite. Think about which layer is the untouched source of truth. Silver and gold are derived; bronze is the statement you can always recompute from.">
+            <h3 class="quiz-question">A bug in the cleaning code wrote wrong countries into silver for a week. What is the safest fix?</h3>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Edit the wrong rows in bronze so the mistake disappears</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Fix the code, then rebuild silver (and gold) from bronze</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Ask MongoDB to resend every user</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Right. Heavy analytical queries on the live app database would slow down the real app for real users. CDC copies changes out so analytics can run somewhere else."
+               data-explanation-wrong="Not quite. The key worry is load: the operational database is busy serving the app, and big reports could make it slow for users.">
+            <h3 class="quiz-question">Your manager asks: "Why not just run the reports directly on MongoDB?" What's the best answer?</h3>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>MongoDB can't count things</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Reports are only allowed on files in S3</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Big reports would compete with the live app for the same database, and history would be lost on every update</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module1')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module1')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>
+<section class="module" id="module-2" style="background: var(--color-bg)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">02</span>
+      <h1 class="module-title">Meet the cast</h1>
+      <p class="module-subtitle">A handful of components, one newsroom. Knowing who does what lets you tell an AI exactly where a change belongs.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Think of it as a newsroom</h2>
+        <p>A newsroom has a stenographer in the courtroom, a wire service that moves stories, an archive in the basement, an editor who rewrites, and a newsstand where readers buy the paper. Our platform has exactly those jobs.</p>
+        <div class="icon-rows">
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-5)">🍃</div><div><strong>MongoDB: the courtroom</strong><p>Where things actually happen. The app writes users here.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">👂</div><div><strong>Debezium: the stenographer</strong><p>Writes down every change MongoDB makes, in order, without interrupting.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-3)">📬</div><div><strong>Kafka: the wire service</strong><p>A durable queue that carries events from the people who write them to whoever reads them.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div><div><strong>Aiven S3 sink + SeaweedFS: the archive</strong><p>The sink files each batch of events into the bronze shelf of an S3-compatible store.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-2)">✍️</div><div><strong>PySpark: the editor</strong><p>Turns the raw archive into a clean silver table, then writes the gold summaries.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">📰</div><div><strong>StarRocks: the newsstand</strong><p>A fast query engine where gold lives and where people (and AI tools) read results.</p></div></div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">The full map: click any piece</h2>
+        <p>Everything runs inside a local
+          <span class="term" data-definition="Kubernetes is a system that runs and supervises many containers (packaged programs) across machines, restarting them if they crash. Amazon's managed version is called EKS.">Kubernetes</span>
+          cluster created by
+          <span class="term" data-definition="kind ('Kubernetes in Docker') creates a small Kubernetes cluster on your laptop by running each 'machine' as a Docker container. Great for practising what you'd later run on EKS.">kind</span>, so it behaves like Amazon EKS without the bill.</p>
+
+        <div class="arch-diagram">
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Source &amp; capture</h4>
+            <div class="arch-component" data-desc="MongoDB 8 in replica-set mode (needed for change streams). A seeder script creates ~5,000 fake users, then keeps inserting, updating and deleting so there is always something to capture."><div class="arch-icon">🍃</div><span>MongoDB</span></div>
+            <div class="arch-component" data-desc="Debezium runs inside Kafka Connect. It reads MongoDB's change stream and emits one Change Event per write, keeping the full envelope (op, after, source timing)."><div class="arch-icon">👂</div><span>Debezium</span></div>
+            <div class="arch-component" data-desc="Kafka 4.3, run by the Strimzi operator. Topic cdc.app.users has 3 partitions, keyed by user id, so all events for one user stay in one partition, in order."><div class="arch-icon">📬</div><span>Kafka (Strimzi)</span></div>
+          </div>
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Storage</h4>
+            <div class="arch-component" data-desc="The Aiven S3 sink connector writes Kafka events as Parquet files into the bronze bucket. It needs no Schema Registry: each message carries its own schema."><div class="arch-icon">📦</div><span>Aiven S3 sink</span></div>
+            <div class="arch-component" data-desc="SeaweedFS stands in for Amazon S3 locally. Buckets: bronze, silver, gold, plus loki, tempo and mimir for monitoring data. MinIO was the first idea but its images are no longer published."><div class="arch-icon">🗄️</div><span>SeaweedFS</span></div>
+            <div class="arch-component" data-desc="Lakekeeper is an Iceberg REST catalog: the index card system that knows which files make up each Iceberg table. In AWS this role is played by the Glue Data Catalog."><div class="arch-icon">🗂️</div><span>Lakekeeper</span></div>
+          </div>
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Processing &amp; serving</h4>
+            <div class="arch-component" data-desc="The Spark Operator watches for SparkApplication resources and starts a driver pod plus executor pods for each run, then cleans them up. Locally it plays the role EMR on EKS plays in AWS."><div class="arch-icon">🎛️</div><span>Spark Operator</span></div>
+            <div class="arch-component" data-desc="The PySpark Pipeline: the only transformation code. It reads new bronze files, upserts silver as an Iceberg table, runs data checks, and writes gold into StarRocks."><div class="arch-icon">⚡</div><span>PySpark Pipeline</span></div>
+            <div class="arch-component" data-desc="StarRocks 4.1 in shared-data mode (its data files live in object storage). It only serves gold (database gold), and will be queried by an MCP server later through a read-only user."><div class="arch-icon">📰</div><span>StarRocks</span></div>
+          </div>
+          <div class="arch-description">Click any component to learn what it does</div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Overheard in the group chat</h2>
+        <p>Here is how the cast coordinates when Ana is deleted from the app.</p>
+
+        <div class="chat-window" id="chat-module2">
+          <div class="chat-messages">
+            <div class="chat-message" data-msg="0" data-sender="mongo" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-5)">🍃</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-5)">MongoDB</span><p>Heads up, the app just deleted user 66a1 (Ana). It's in my oplog.</p></div>
+            </div>
+            <div class="chat-message" data-msg="1" data-sender="debezium" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-1)">👂</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-1)">Debezium</span><p>Got it. Emitting a Change Event with op = "d". There's no "after" document, she's gone. I'm skipping the empty "tombstone" message, the sink would choke on it.</p></div>
+            </div>
+            <div class="chat-message" data-msg="2" data-sender="kafka" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-3)">📬</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-3)">Kafka</span><p>Stored in partition 1, offset 8813. Same partition as all her earlier events, so her history stays in order.</p></div>
+            </div>
+            <div class="chat-message" data-msg="3" data-sender="sink" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-4)">📦</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-4)">Aiven sink</span><p>Batched it with 40 other events into a new Parquet file in bronze. I never touch old files.</p></div>
+            </div>
+            <div class="chat-message" data-msg="4" data-sender="pyspark" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-2)">⚡</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-2)">PySpark</span><p>Next run I'll read past my High-Water Mark, see the delete, and set is_deleted = true on her silver row. I won't remove the row.</p></div>
+            </div>
+            <div class="chat-message" data-msg="5" data-sender="starrocks" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-1)">📰</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-1)">StarRocks</span><p>And in gold she disappears from "users by country", but stays counted in "daily signups". She <em>did</em> sign up that day.</p></div>
+            </div>
+          </div>
+          <div class="chat-typing" style="display:none">
+            <div class="chat-avatar" id="chat-module2-typing-avatar">?</div>
+            <div class="chat-typing-dots"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>
+          </div>
+          <div class="chat-controls">
+            <button class="btn chat-next-btn">Next Message</button>
+            <button class="btn chat-all-btn">Play All</button>
+            <button class="btn chat-reset-btn">Replay</button>
+            <span class="chat-progress"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">How the archivist is configured</h2>
+        <p>Components like the sink aren't programmed, they're <em>configured</em>. A <strong>design sketch</strong> of the bronze sink's settings (based on the plan, not yet tested):</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line"><span class="code-property">kind</span>: KafkaConnector</span>
+<span class="code-line"><span class="code-property">spec</span>:</span>
+<span class="code-line">  <span class="code-property">config</span>:</span>
+<span class="code-line">    <span class="code-property">topics</span>: <span class="code-string">cdc.app.users</span></span>
+<span class="code-line">    <span class="code-property">value.converter.schemas.enable</span>: <span class="code-keyword">true</span></span>
+<span class="code-line">    <span class="code-property">format.output.type</span>: <span class="code-string">parquet</span></span>
+<span class="code-line">    <span class="code-property">format.output.fields</span>: <span class="code-string">key,value,offset,timestamp</span></span>
+<span class="code-line">    <span class="code-property">aws.s3.endpoint</span>: <span class="code-string">http://seaweedfs-s3.data:8333</span></span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">"Please create a connector." This is a <span class="term" data-definition="A Kubernetes resource is a YAML description of something you want to exist (a database, a connector…). An operator watches these files and makes reality match them.">Kubernetes resource</span>, handled by the Strimzi operator.</p>
+              <p class="tl">The description of what we want…</p>
+              <p class="tl">…its settings:</p>
+              <p class="tl">Listen to the users' Change Event topic.</p>
+              <p class="tl">Every message carries its own description of its fields, so no separate Schema Registry is needed.</p>
+              <p class="tl">Write <span class="term" data-definition="Parquet is a compressed, column-by-column file format. Analytics engines read it far faster than JSON because they can skip the columns they don't need.">Parquet</span> files, which StarRocks and Spark both read natively.</p>
+              <p class="tl">Store the Kafka offset next to each event, so pipelines can remember how far they've read.</p>
+              <p class="tl">Send files to our local S3 stand-in instead of Amazon.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-info">
+          <div class="callout-icon">🧭</div>
+          <div class="callout-content">
+            <strong class="callout-title">Why not plain JSON files in bronze?</strong>
+            <p>We checked StarRocks' source code: its <code>FILES()</code> reader handles Parquet, ORC, CSV and Avro, but not JSON. A detail like that decides the design, which is why it's written up in ADR-0004.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Match each job to its owner</h2>
+        <div class="dnd-container" id="dnd-module2">
+          <div class="dnd-chips">
+            <div class="dnd-chip" draggable="true" data-answer="debezium">Debezium</div>
+            <div class="dnd-chip" draggable="true" data-answer="kafka">Kafka</div>
+            <div class="dnd-chip" draggable="true" data-answer="lakekeeper">Lakekeeper</div>
+            <div class="dnd-chip" draggable="true" data-answer="starrocks">StarRocks</div>
+          </div>
+          <div class="dnd-zones">
+            <div class="dnd-zone" data-correct="debezium"><p class="dnd-zone-label">New users stopped showing up in bronze, and MongoDB is fine. Whose "reading the diary" job should you check first?</p><div class="dnd-zone-target">Drop here</div></div>
+            <div class="dnd-zone" data-correct="kafka"><p class="dnd-zone-label">You want events for one user to always stay in order, even with several readers.</p><div class="dnd-zone-target">Drop here</div></div>
+            <div class="dnd-zone" data-correct="lakekeeper"><p class="dnd-zone-label">Spark can see the silver files but says the Iceberg table "doesn't exist".</p><div class="dnd-zone-target">Drop here</div></div>
+            <div class="dnd-zone" data-correct="starrocks"><p class="dnd-zone-label">An AI assistant (via MCP) should answer "how many active users in Brazil?"</p><div class="dnd-zone-target">Drop here</div></div>
+          </div>
+          <button class="btn" onclick="checkDnD('dnd-module2')">Check Matches</button>
+          <button class="btn" onclick="resetDnD('dnd-module2')">Reset</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>
+<section class="module" id="module-3" style="background: var(--color-bg-warm)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">03</span>
+      <h1 class="module-title">Who wins? Order, replays and deletes</h1>
+      <p class="module-subtitle">The subtle part. Get this wrong and silver quietly shows old data, and nobody notices for weeks.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Postcards with postmarks</h2>
+        <p>Imagine a friend sends three postcards from a trip, but the mail delivers them out of order. To know where they are <em>now</em>, you don't trust the order they arrived. You read the <strong>postmark</strong>.</p>
+        <p>Our postmark is the <strong>Event Position</strong>. When two Change Events for the same user compete, the higher Event Position wins.</p>
+        <div class="step-cards">
+          <div class="step-card"><div class="step-num">1</div><div class="step-body"><strong>Compare <code>ts_ms</code></strong><p>MongoDB's clock time of the change, in milliseconds.</p></div></div>
+          <div class="step-card"><div class="step-num">2</div><div class="step-body"><strong>Tie? Compare <code>ord</code></strong><p>The change's sequence number inside MongoDB's <span class="term" data-definition="The oplog (operations log) is MongoDB's internal, ordered diary of every write. Replicas and tools like Debezium read it to learn what changed.">oplog</span>.</p></div></div>
+          <div class="step-card"><div class="step-num">3</div><div class="step-body"><strong>Still tied? Compare the Kafka offset</strong><p>Its position in the queue, as the final tiebreak.</p></div></div>
+          <div class="step-card"><div class="step-num">!</div><div class="step-body"><strong>A delete is final</strong><p>MongoDB never reuses a user id, so nothing can come "after" a delete.</p></div></div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">The trap we found during research</h2>
+        <p>The first design said "<code>ts_ms</code> is the oplog timestamp". Reading Debezium's source showed it's actually MongoDB's <em>wall clock</em>, and that snapshot events carry the time they were <em>read</em>, not when the user was created.</p>
+        <div class="callout callout-warning">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-content">
+            <strong class="callout-title">Verify field meanings at the source</strong>
+            <p>A field name like <code>ts_ms</code> looks obvious and is easy to assume. When AI writes ordering logic for you, ask it to cite the docs or source for what each field means. That's how this design caught the problem before any code existed.</p>
+          </div>
+        </div>
+        <p>Two fixes came out of it: the Kafka offset as a final tiebreak, and the seeder <strong>waits for the initial
+          <span class="term" data-definition="A snapshot is Debezium's first pass, when it reads every existing record once (op = r) before switching to streaming live changes.">snapshot</span>
+          to finish</strong> before it starts changing users. That way a snapshot's "read time" can never beat a real update.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Two different questions, two different numbers</h2>
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+            <div class="pattern-icon" style="background: var(--color-actor-1)">🏁</div>
+            <h4 class="pattern-title">"Which event wins?"</h4>
+            <p class="pattern-desc"><strong>Event Position.</strong> The postmark. Decides the final state of each user.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+            <div class="pattern-icon" style="background: var(--color-actor-2)">🔖</div>
+            <h4 class="pattern-title">"What haven't I read yet?"</h4>
+            <p class="pattern-desc"><strong>High-Water Mark.</strong> A bookmark per Kafka partition: "I've applied up to offset 8812."</p>
+          </div>
+        </div>
+        <p>Why not use the time as the bookmark too? Bronze files from different
+          <span class="term" data-definition="A partition is one lane of a Kafka topic. A topic is split into several lanes so work can be spread out; order is guaranteed only within one lane.">partitions</span>
+          land at different moments. A "time &gt; last time I saw" bookmark would silently <strong>skip</strong> a late file from a slower lane. ADR-0002 exists so nobody "simplifies" this back later.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">The replay problem, and the guard against it</h2>
+        <p>After a crash, Debezium may <strong>resend old events</strong>. They arrive with <em>higher</em> Kafka offsets but <em>older</em> Event Positions. A naive "latest file wins" update would let an old email overwrite Ana's new one.</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line">spark.sql(<span class="code-string">"""</span></span>
+<span class="code-line"><span class="code-string">MERGE INTO lake.silver.users s</span></span>
+<span class="code-line"><span class="code-string">USING latest_in_batch b ON s.user_id = b.user_id</span></span>
+<span class="code-line"><span class="code-string">WHEN MATCHED AND s.is_deleted = false</span></span>
+<span class="code-line"><span class="code-string"> AND (b.ts_ms, b.ord, b.kafka_offset) &gt; (s.ts_ms, s.ord, s.kafka_offset)</span></span>
+<span class="code-line"><span class="code-string"> THEN UPDATE SET *</span></span>
+<span class="code-line"><span class="code-string">WHEN NOT MATCHED THEN INSERT *</span></span>
+<span class="code-line"><span class="code-string">"""</span>)</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">Ask <span class="term" data-definition="Spark (here driven from Python, so PySpark) is an engine that processes big data by splitting the work across several worker processes.">Spark</span> to run this database command:</p>
+              <p class="tl"><span class="term" data-definition="MERGE is a database command that says: for each incoming row, update the matching existing row, or insert it if there is none, optionally only when a condition is true.">MERGE</span> into the silver users table (an <span class="term" data-definition="Apache Iceberg is an open table format: it turns a folder of Parquet files into a proper table with updates, schema changes and history, readable by many engines.">Iceberg</span> table)…</p>
+              <p class="tl">…the incoming batch (already reduced to one winner per user), matched by user id.</p>
+              <p class="tl">If the user exists and isn't deleted (a delete is final)…</p>
+              <p class="tl">…and the incoming Event Position is strictly newer than the stored one…</p>
+              <p class="tl">…then overwrite the row. Replays have older positions, so they lose automatically.</p>
+              <p class="tl">A brand-new user? Insert them.</p>
+              <p class="tl">End of the command.</p>
+            </div>
+          </div>
+        </div>
+        <p>Without the "strictly newer" line, a replayed old event would overwrite Ana's new email. That line is the whole defence, which is why there is a dedicated <strong>replay test</strong>: reset Debezium's position, let it resend, and check silver doesn't go back in time.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Spot the bug</h2>
+        <p>An AI assistant wrote the "read only new data" step of the PySpark Pipeline. Which line breaks the design?</p>
+        <div class="bug-challenge">
+          <div class="bug-code">
+            <div class="bug-line" onclick="checkBugLine(this, false)" data-hint="That line is fine. It just reads the bronze Parquet files."><span class="line-num">1</span><code>bronze = spark.read.parquet("s3a://bronze/topics/cdc.app.users/")</code></div>
+            <div class="bug-line" onclick="checkBugLine(this, false)" data-hint="Fine. It looks up what was already processed."><span class="line-num">2</span><code>last = spark.table("lake.silver.users").agg(F.max("ts_ms")).first()[0]</code></div>
+            <div class="bug-line bug-target" onclick="checkBugLine(this, true)" data-explanation="This uses event time as the bookmark. A late bronze file from a slower partition holds events older than the max ts_ms, so they're skipped forever. The design (ADR-0002) keeps a High-Water Mark of Kafka offsets per partition instead, and reads offsets above it."><span class="line-num">3</span><code>new_events = bronze.where(F.col("ts_ms") &gt; last)</code></div>
+            <div class="bug-line" onclick="checkBugLine(this, false)" data-hint="Fine. It hands the new events to the next step."><span class="line-num">4</span><code>apply_to_silver(new_events)</code></div>
+          </div>
+          <div class="bug-feedback"></div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Apply it</h2>
+        <div class="quiz-container" id="quiz-module3">
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Yes. A deleted user is kept and flagged (soft delete). Current-state metrics filter them out, but daily_signups still counts her, because the signup really happened."
+               data-explanation-wrong="Not quite. Silver keeps every user ever seen; deletes only set a flag. Then each Gold Metric decides for itself whether Deleted Users count.">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Ana signed up on Monday and deleted her account on Friday. On Saturday, what do silver and gold show?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Her silver row is gone, and Monday's signup count drops by one</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Her silver row has is_deleted = true. She's out of users_by_country but still in Monday's daily_signups</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Nothing changes until someone runs a full rebuild</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Right. A replay arrives at higher offsets with older Event Positions. Without the 'strictly newer than what silver holds' condition in the MERGE, the old email wins again. This is exactly the replay test in the plan's verification list."
+               data-explanation-wrong="Think about what happens after a connector crash: old events can be resent, and they arrive later than the newer ones they should lose to.">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>After Kafka Connect crashed and restarted, some users in silver show an email they changed weeks ago. MongoDB has the right email. Most likely cause?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>MongoDB lost data during the crash</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Bronze files were overwritten by the sink</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Debezium replayed old events, and the silver MERGE is missing the Event Position guard</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module3')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module3')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>
+<section class="module" id="module-4" style="background: var(--color-bg)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">04</span>
+      <h1 class="module-title">Inside the Pipeline</h1>
+      <p class="module-subtitle">One PySpark Pipeline does all the transformation work, and it runs right inside your local Kubernetes cluster.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">A moving company that only exists during the move</h2>
+        <p>A moving company sends a <strong>foreman</strong> who plans the job and a <strong>crew</strong> who carry boxes. When the truck is unloaded, everyone goes home. Nobody sits in your house waiting for the next move.</p>
+        <p>A Spark run on <span class="term" data-definition="Kubernetes is a system that runs and supervises containers (packaged programs) across machines. kind runs a small one on your laptop; EKS is Amazon's managed version.">Kubernetes</span> works exactly like that.</p>
+        <div class="flow-steps">
+          <div class="flow-step"><div class="flow-step-num">🎛️</div><p><strong>Spark Operator</strong><br>The dispatcher: sees a job request and sends a team</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🧑‍💼</div><p><strong>Driver pod</strong><br>The foreman: plans the work and splits it into tasks</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">👷</div><p><strong>Executor pods</strong><br>The crew: do the tasks in parallel</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🏁</div><p><strong>Done</strong><br>All pods are removed; memory is freed</p></div>
+        </div>
+        <p>A <span class="term" data-definition="A pod is the smallest unit Kubernetes runs: one or more containers that start, stop and share resources together.">pod</span> is one running container. Because the crew leaves after every run, Spark only uses your Mac's memory while it is actually working.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">How you ask for a run</h2>
+        <p>You don't start Spark by hand. You hand Kubernetes a description of the job, and the Spark Operator makes it happen. A <strong>design sketch</strong>:</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line"><span class="code-property">kind</span>: SparkApplication</span>
+<span class="code-line"><span class="code-property">spec</span>:</span>
+<span class="code-line">  <span class="code-property">type</span>: Python</span>
+<span class="code-line">  <span class="code-property">image</span>: medallion/spark:dev</span>
+<span class="code-line">  <span class="code-property">imagePullPolicy</span>: Never</span>
+<span class="code-line">  <span class="code-property">mainApplicationFile</span>: <span class="code-string">local:///opt/app/bronze_to_silver.py</span></span>
+<span class="code-line">  <span class="code-property">driver</span>:   { <span class="code-property">cores</span>: <span class="code-number">1</span>, <span class="code-property">memory</span>: <span class="code-string">"1g"</span> }</span>
+<span class="code-line">  <span class="code-property">executor</span>: { <span class="code-property">instances</span>: <span class="code-number">1</span>, <span class="code-property">memory</span>: <span class="code-string">"1g"</span> }</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">"I want a Spark job," as a <span class="term" data-definition="A Kubernetes resource is a YAML description of something you want to exist. An operator watches these descriptions and makes reality match them.">Kubernetes resource</span>.</p>
+              <p class="tl">Here are the details:</p>
+              <p class="tl">It's written in Python, so <span class="term" data-definition="PySpark is the Python way of writing Apache Spark jobs.">PySpark</span>.</p>
+              <p class="tl">Use our own <span class="term" data-definition="A container image is a packaged, ready-to-run copy of a program and everything it needs (Python, Spark, extra libraries, our .py files).">container image</span>, with Spark, Iceberg, the StarRocks connector and our code inside.</p>
+              <p class="tl">Don't download it from the internet: kind already has it (we copied it in with <code>kind load</code>).</p>
+              <p class="tl">Which script to run.</p>
+              <p class="tl">The foreman gets 1 CPU and 1 GB of memory…</p>
+              <p class="tl">…and one crew member with 1 GB. Small on purpose: the whole platform has to fit in 16 GB.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">One run, three steps</h2>
+        <div class="step-cards">
+          <div class="step-card"><div class="step-num">1</div><div class="step-body"><strong>bronze_to_silver</strong><p>Read only the bronze files beyond the High-Water Mark, pick the winning event per user, MERGE into the Iceberg silver table, then move the bookmark forward.</p></div></div>
+          <div class="step-card"><div class="step-num">2</div><div class="step-body"><strong>checks</strong><p>Data checks on silver: every <code>user_id</code> unique and present, every <code>status</code> one of active, inactive or suspended. If any check fails, the run stops here.</p></div></div>
+          <div class="step-card"><div class="step-num">3</div><div class="step-body"><strong>silver_to_gold</strong><p>Build the three Gold Metrics and publish them to StarRocks, all at once, so readers never see a half-built table.</p></div></div>
+        </div>
+        <div class="arch-diagram">
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Where each layer lives (click)</h4>
+            <div class="arch-component" data-desc="Bronze: Parquet files in the bronze bucket, written by the Aiven sink. Spark reads them directly."><div class="arch-icon">🥉</div><span>Bronze = Parquet files</span></div>
+            <div class="arch-component" data-desc="Silver: an Apache Iceberg table in the silver bucket, catalogued by Lakekeeper. Iceberg is an open format, so other engines (Athena, Trino, StarRocks) could read it too."><div class="arch-icon">🧊</div><span>Silver = Iceberg</span></div>
+            <div class="arch-component" data-desc="Gold: native StarRocks tables in the database gold. Fast to query for dashboards and, later, an AI assistant through MCP."><div class="arch-icon">🥇</div><span>Gold = StarRocks</span></div>
+          </div>
+          <div class="arch-description">Click any layer to see where it lives and why</div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Publishing gold without a "half-built" moment</h2>
+        <p>The StarRocks connector for Spark can only <em>add</em> rows; it can't replace a table. So the Pipeline builds a hidden copy, then swaps it in. A <strong>design sketch</strong>:</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH · silver_to_gold.py</span>
+<pre><code><span class="code-line">df = (spark.table(<span class="code-string">"lake.silver.users"</span>)</span>
+<span class="code-line">      .where(~F.col(<span class="code-string">"is_deleted"</span>))</span>
+<span class="code-line">      .groupBy(<span class="code-string">"country"</span>, <span class="code-string">"status"</span>)</span>
+<span class="code-line">      .agg(F.count(<span class="code-string">"*"</span>).alias(<span class="code-string">"users"</span>)))</span>
+<span class="code-line">write_staging(df, <span class="code-string">"gold.users_by_country_stg"</span>)</span>
+<span class="code-line">swap(<span class="code-string">"users_by_country"</span>, <span class="code-string">"users_by_country_stg"</span>)</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">Load silver into a <span class="term" data-definition="A DataFrame is Spark's table-in-progress: rows and named columns you transform step by step with code.">DataFrame</span>.</p>
+              <p class="tl">Skip Deleted Users (this metric is about current users).</p>
+              <p class="tl">Group by country and status…</p>
+              <p class="tl">…and count.</p>
+              <p class="tl">Write the result into a hidden staging table in StarRocks.</p>
+              <p class="tl">Swap staging and live gold in one step (<code>ALTER TABLE … SWAP WITH</code>). Readers see the old version, then the new one, never anything in between.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-accent">
+          <div class="callout-icon">💡</div>
+          <div class="callout-content">
+            <strong class="callout-title">Build aside, then swap</strong>
+            <p>Building the new version next to the old one and switching over in one move is called an <em>atomic swap</em>. It's the same idea as blue/green deployments. When AI writes code that replaces data people are reading, ask: "is the switch-over atomic, or will readers see an empty table?"</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">What we keep, and what we gave up</h2>
+        <p>dbt was dropped (ADR-0005), so a few things it would have given us for free are now our job:</p>
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-5)">
+            <div class="pattern-icon" style="background: var(--color-actor-5)">✅</div>
+            <h4 class="pattern-title">Data checks</h4>
+            <p class="pattern-desc">Written in PySpark (<code>checks.py</code>) instead of dbt tests. A failed check fails the run, and gold keeps its previous version.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+            <div class="pattern-icon" style="background: var(--color-actor-3)">🧪</div>
+            <h4 class="pattern-title"><span class="term" data-definition="Unit tests are small automated checks of one piece of logic on tiny made-up data, e.g. 'given these three events for Ana, the newest one wins'.">Unit tests</span></h4>
+            <p class="pattern-desc">pytest with a local Spark session: Event Position winner, delete is final, replay ignored, New Attribute flattening.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+            <div class="pattern-icon" style="background: var(--color-actor-4)">🗺️</div>
+            <h4 class="pattern-title"><span class="term" data-definition="Lineage is the map of which table is built from which, so you can see what breaks if something upstream changes.">Lineage</span></h4>
+            <p class="pattern-desc">No automatic graph anymore. Run traces (module 5) and the README show which step builds which table.</p>
+          </div>
+        </div>
+        <p>And the New Attribute promise still stands: when the app starts sending <code>phone</code>, silver gains a <code>phone</code> column with <strong>zero code changes</strong>. It's one of the spikes to prove first.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Apply it</h2>
+        <div class="quiz-container" id="quiz-module4">
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Exactly. The swap never happened, so dashboards keep showing yesterday's (correct) gold. A failed run should leave readers with stale-but-right data, never fresh-but-wrong data."
+               data-explanation-wrong="Remember the order: checks run before gold is swapped in. What does that mean for readers when a check fails?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>At 3 am a data check fails: two silver rows share the same <code>user_id</code>. What do people querying gold in StarRocks see in the morning?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Gold with the duplicate counted twice</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The previous version of gold, unchanged. The run stopped before the swap</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Empty gold tables until someone fixes it</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="a"
+               data-explanation-right="Right. Executors are the workers, so the fix is a bigger executor (or more of them) in the SparkApplication. And check the 16 GB budget, since every extra GB comes from something else."
+               data-explanation-wrong="'OOMKilled' means Kubernetes stopped a pod for using more memory than it was allowed. Which part of the job description sets that limit?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>After a busy day, bronze_to_silver fails and Kubernetes shows the executor pod as <code>OOMKilled</code>. What do you ask your AI to change?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Raise the executor memory (or instances) in the SparkApplication, within the Docker memory budget</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Give MongoDB more memory</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Delete old bronze files so there's less to read</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Yes. A new Gold Metric is built from silver, so it belongs in silver_to_gold (with its own staging and swap), plus a check if it has rules. Silver and bronze don't change."
+               data-explanation-wrong="Think about which layer a business summary is built from, and which step builds that layer.">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Marketing wants a new gold table: users per city. Where should the change go?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>In the Debezium connector config</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>In bronze_to_silver, next to the MERGE</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>In silver_to_gold: build it from silver, write to staging, swap it in</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module4')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module4')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>
+<section class="module" id="module-5" style="background: var(--color-bg-warm)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">05</span>
+      <h1 class="module-title">Watching it run, and when it breaks</h1>
+      <p class="module-subtitle">Monitoring, the road from laptop to EKS, and the things to test before writing any real code.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">A hospital monitor for data</h2>
+        <p>A patient monitor shows heart rate, a printout records events, and an alarm beeps when something crosses a line. The <span class="term" data-definition="LGTM is Grafana's monitoring stack: Loki (logs), Grafana (dashboards), Tempo (traces), Mimir (metrics). All four run locally in this project.">LGTM stack</span> plays all three roles for our platform.</p>
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+            <div class="pattern-icon" style="background: var(--color-actor-1)">📈</div>
+            <h4 class="pattern-title">Metrics → Mimir</h4>
+            <p class="pattern-desc">Numbers over time: Kafka lag, run durations, rows processed. These are the vital signs.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+            <div class="pattern-icon" style="background: var(--color-actor-4)">📜</div>
+            <h4 class="pattern-title">Logs → Loki</h4>
+            <p class="pattern-desc">Every line each program prints. Where you read the actual error.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+            <div class="pattern-icon" style="background: var(--color-actor-3)">🧵</div>
+            <h4 class="pattern-title">Traces → Tempo</h4>
+            <p class="pattern-desc">One <span class="term" data-definition="A trace is a timeline of one operation broken into 'spans' (steps), so you can see which step was slow or failed.">trace</span> per Pipeline run, with a span per step: bronze_to_silver, checks, silver_to_gold.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+            <div class="pattern-icon" style="background: var(--color-actor-2)">🖥️</div>
+            <h4 class="pattern-title">Grafana</h4>
+            <p class="pattern-desc">The screen where all three come together, as dashboards stored as code in the repo.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">How a run reports itself</h2>
+        <p>Batch jobs start and finish quickly, so nothing can "poll" them in time. Instead, each run <em>pushes</em> its own report to one collector, <span class="term" data-definition="Grafana Alloy is a single collector program: it scrapes metrics, tails logs and receives traces, then forwards each to the right storage.">Alloy</span>.</p>
+
+        <div class="flow-animation" data-steps='[
+          {"highlight":"flow-m5a1","label":"A Pipeline run finishes. Each step timed itself and counted the rows it read and wrote."},
+          {"highlight":"flow-m5a2","label":"The Spark driver sends spans and metrics over OTLP to Alloy.","packet":true,"from":"m5a1","to":"m5a2"},
+          {"highlight":"flow-m5a3","label":"Alloy forwards metrics (duration, rows read, High-Water Mark, check results) to Mimir.","packet":true,"from":"m5a2","to":"m5a3"},
+          {"highlight":"flow-m5a4","label":"Alloy forwards the run trace to Tempo. One span per step.","packet":true,"from":"m5a2","to":"m5a4"},
+          {"highlight":"flow-m5a5","label":"Grafana shows the Medallion Pipeline dashboard: CDC lag, Pipeline Lag, freshness, run durations, check results.","packet":true,"from":"m5a3","to":"m5a5"}
+        ]'>
+          <div class="flow-actors">
+            <div class="flow-actor" id="flow-m5a1"><div class="flow-actor-icon">⚡</div><span>Pipeline run</span></div>
+            <div class="flow-actor" id="flow-m5a2"><div class="flow-actor-icon">🛰️</div><span>Alloy</span></div>
+            <div class="flow-actor" id="flow-m5a3"><div class="flow-actor-icon">📈</div><span>Mimir</span></div>
+            <div class="flow-actor" id="flow-m5a4"><div class="flow-actor-icon">🧵</div><span>Tempo</span></div>
+            <div class="flow-actor" id="flow-m5a5"><div class="flow-actor-icon">🖥️</div><span>Grafana</span></div>
+          </div>
+          <div class="flow-packet"></div>
+          <div class="flow-step-label">Click "Next Step" to begin</div>
+          <div class="flow-controls">
+            <button class="btn flow-next-btn">Next Step</button>
+            <button class="btn flow-reset-btn">Restart</button>
+            <span class="flow-progress"></span>
+          </div>
+        </div>
+
+        <p>The headline number is <strong>Pipeline Lag</strong>: the time from a change happening in MongoDB to it showing up in silver. If it climbs, the dashboard's earlier panels (CDC lag, bronze freshness) tell you which stage is behind.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">An alarm, translated</h2>
+        <p>Alerts are rules stored in the repo. A <strong>design sketch</strong> of one:</p>
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line">- <span class="code-property">alert</span>: CdcLagHigh</span>
+<span class="code-line">  <span class="code-property">expr</span>: debezium_millis_behind_source &gt; <span class="code-number">300000</span></span>
+<span class="code-line">  <span class="code-property">for</span>: <span class="code-number">5m</span></span>
+<span class="code-line">  <span class="code-property">labels</span>: { <span class="code-property">severity</span>: <span class="code-string">warning</span> }</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">An alarm named "CDC lag is high".</p>
+              <p class="tl">Fire when Debezium is more than 5 minutes (300,000 ms) behind MongoDB…</p>
+              <p class="tl">…and has stayed that way for 5 minutes, so a short blip doesn't raise a false alarm.</p>
+              <p class="tl">Mark it as a warning. In this POC it only shows in Grafana. Nobody gets paged.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Laptop today, EKS tomorrow</h2>
+        <p>Every local piece was chosen because it has an AWS counterpart:</p>
+        <div class="badge-list">
+          <div class="badge-item"><code class="badge-code">kind</code><span class="badge-desc">→ Amazon EKS (managed Kubernetes)</span></div>
+          <div class="badge-item"><code class="badge-code">SeaweedFS</code><span class="badge-desc">→ Amazon S3, with IRSA for credentials</span></div>
+          <div class="badge-item"><code class="badge-code">Strimzi + Connect</code><span class="badge-desc">→ Amazon MSK + MSK Connect, or Strimzi on EKS</span></div>
+          <div class="badge-item"><code class="badge-code">Lakekeeper</code><span class="badge-desc">→ AWS Glue Data Catalog</span></div>
+          <div class="badge-item"><code class="badge-code">Spark Operator</code><span class="badge-desc">→ EMR on EKS</span></div>
+          <div class="badge-item"><code class="badge-code">StarRocks operator</code><span class="badge-desc">→ StarRocks on EKS (shared-data on S3)</span></div>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-icon">🔐</div>
+          <div class="callout-content">
+            <strong class="callout-title">The MCP server can write</strong>
+            <p>The official StarRocks <span class="term" data-definition="MCP (Model Context Protocol) is a standard way to give an AI assistant tools, such as running queries against a database.">MCP</span> server always exposes a <code>write_query</code> tool. The only protection is the database user: <code>mcp_reader</code> gets SELECT on <code>gold</code> and nothing else. When you connect an AI to data, enforce limits in the database, not just in the prompt.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Test the risky assumptions first</h2>
+        <p>Before building the whole thing, the plan starts with four small <span class="term" data-definition="A spike is a short, throwaway experiment to answer one risky question (does X actually work?) before you commit to building on it.">spikes</span>. Any of these failing changes the design:</p>
+        <div class="step-cards">
+          <div class="step-card"><div class="step-num">a</div><div class="step-body"><strong>Aiven sink on Kafka 4.3</strong><p>Parquet output, S3 path-style requests to SeaweedFS, and the <code>dt=/hr=</code> folder layout.</p></div></div>
+          <div class="step-card"><div class="step-num">b</div><div class="step-body"><strong>The MERGE adds New Attribute columns by itself</strong><p>Spark 4.1 + Iceberg 1.12 adding a <code>phone</code> column with no manual change.</p></div></div>
+          <div class="step-card"><div class="step-num">c</div><div class="step-body"><strong>StarRocks shared-data on SeaweedFS</strong><p>Plus the Spark connector writing a staging table that is then swapped in.</p></div></div>
+          <div class="step-card"><div class="step-num">d</div><div class="step-body"><strong>Mimir as one pod</strong><p>No official single-binary chart exists.</p></div></div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Debug it</h2>
+        <div class="quiz-container" id="quiz-module5">
+          <div class="quiz-question-block"
+               data-correct="a"
+               data-explanation-right="Yes. Fast, successful runs with stale results mean there's little new data to read. If Debezium is behind MongoDB, nothing downstream can be fresh. Start at the head of the river. CDC lag is exactly the first panel on the Medallion Pipeline dashboard."
+               data-explanation-wrong="Work from upstream to downstream. If silver is stale, first check whether fresh data is even reaching bronze.">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Pipeline Lag jumped to 40 minutes, but every Pipeline run in the last hour succeeded quickly. Where do you look first?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The CDC lag and connector status panels. Something upstream of the Pipeline</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The MERGE statement in bronze_to_silver</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The gold tables in StarRocks</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Right. The trace shows which step took the time, and Loki has that step's log lines (driver and executors). Metrics tell you that something is wrong; traces and logs tell you where and why."
+               data-explanation-wrong="A single number (duration) says something is slow, not where. Which signal breaks a run into steps?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>The Pipeline run duration doubled overnight, but nothing failed. How do you find the culprit fastest?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Restart the StarRocks pods and see if it improves</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Double every memory setting and hope</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Open that run's trace in Tempo to find the slow step, then read its logs in Loki</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Exactly. The spike exists to catch this early. If it fails, the design has to change (for example, an explicit ALTER TABLE before the MERGE), and that's far cheaper to learn before the rest is built."
+               data-explanation-wrong="Spikes are about learning cheaply before committing. What does a failing spike tell you about the plan?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Spike (b) fails: the Iceberg MERGE won't add the <code>phone</code> column automatically. What's the right reaction?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Ignore it and build everything anyway</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Revisit how New Attributes reach silver (and record the decision in an ADR) before building the rest</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Drop New Attributes from silver entirely without telling anyone</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module5')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module5')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>
+  </main>
+
+</body>
+</html>

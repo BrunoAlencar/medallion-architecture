@@ -1,0 +1,98 @@
+# grafana-community/grafana chart 14.4.0 (Grafana 13.3.0).
+# Data sources: Mimir (metrics + alert rules), Loki, Tempo, Mimir Alertmanager, StarRocks (gold + ops).
+# Dashboards: ConfigMaps labelled grafana_dashboard=1 (generated from infra/k8s/dashboards/*.json).
+admin:
+  existingSecret: medallion-credentials
+  userKey: GRAFANA_ADMIN_USER
+  passwordKey: GRAFANA_ADMIN_PASSWORD
+envFromSecret: medallion-credentials
+persistence:
+  enabled: false
+resources:
+  requests: {cpu: 50m, memory: 192Mi}
+  limits: {memory: 512Mi}
+
+grafana.ini:
+  auth.anonymous:
+    enabled: true
+    org_role: Viewer
+  dashboards:
+    default_home_dashboard_path: /tmp/dashboards/Medallion/platform-health.json
+  unified_alerting:
+    enabled: true
+  feature_toggles:
+    enable: traceToMetrics
+
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: observability
+    folderAnnotation: grafana_folder
+    provider:
+      foldersFromFilesStructure: true
+      allowUiUpdates: true
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        uid: mimir
+        type: prometheus
+        url: http://mimir.observability.svc.cluster.local:9009/prometheus
+        isDefault: true
+        jsonData:
+          prometheusType: Mimir
+          manageAlerts: true
+          alertmanagerUid: mimir-alertmanager
+          timeInterval: 15s
+      - name: Mimir Alertmanager
+        uid: mimir-alertmanager
+        type: alertmanager
+        url: http://mimir.observability.svc.cluster.local:9009/
+        jsonData:
+          implementation: mimir
+          handleGrafanaManagedAlerts: false
+      - name: Loki
+        uid: loki
+        type: loki
+        url: http://loki.observability.svc.cluster.local:3100
+        jsonData:
+          maxLines: 2000
+          derivedFields:
+            # Pipeline log lines carry trace_id=<hex>: click it to open the run's trace.
+            - name: trace_id
+              matcherType: regex
+              matcherRegex: "trace_id=([0-9a-f]{32})"
+              datasourceUid: tempo
+              url: "$${__value.raw}"
+              urlDisplayLabel: Open trace
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        url: http://tempo.observability.svc.cluster.local:3200
+        jsonData:
+          nodeGraph: {enabled: true}
+          serviceMap: {datasourceUid: mimir}
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            filterByTraceID: false
+            customQuery: true
+            query: '{namespace="processing"} |= "$${__trace.traceId}"'
+          tracesToMetrics:
+            datasourceUid: mimir
+      - name: StarRocks
+        uid: starrocks
+        type: mysql
+        url: starrocks-fe-service.data.svc.cluster.local:9030
+        user: grafana_reader
+        jsonData:
+          database: gold
+          maxOpenConns: 5
+          timeInterval: 1m
+        secureJsonData:
+          password: $STARROCKS_GRAFANA_PASSWORD

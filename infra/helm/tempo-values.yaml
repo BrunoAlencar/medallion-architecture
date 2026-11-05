@@ -1,0 +1,37 @@
+# grafana-community/tempo chart 3.2.1 (Tempo 3.1.1), single binary on SeaweedFS.
+# Metrics generator writes service-graph and span metrics to Mimir (Tempo "Service graph" view).
+# S3 keys are passed with --set by the Makefile.
+tempo:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo
+        endpoint: seaweedfs-s3.data.svc.cluster.local:8333
+        region: us-east-1
+        insecure: true
+        forcepathstyle: true
+      wal:
+        path: /var/tempo/wal
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: "http://mimir.observability.svc.cluster.local:9009/api/v1/push"
+  overrides:
+    defaults:
+      metrics_generator:
+        processors:
+          - service-graphs
+          - span-metrics
+persistence:
+  enabled: true
+  size: 5Gi

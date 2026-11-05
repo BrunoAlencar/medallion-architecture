@@ -1,0 +1,5 @@
+# starrocks/operator chart 1.11.8. The cluster itself is infra/k8s/starrocks/starrocks-cluster.yaml.
+starrocksOperator:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 192Mi}

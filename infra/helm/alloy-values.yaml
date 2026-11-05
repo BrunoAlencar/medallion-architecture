@@ -1,0 +1,262 @@
+# grafana/alloy chart 1.15.0: the single collector.
+#   metrics: pods annotated prometheus.io/scrape=true + kubelet cAdvisor + kube-state-metrics -> Mimir
+#   logs:    every pod's stdout via the Kubernetes API -> Loki
+#   OTLP:    :4317 gRPC / :4318 HTTP from the Pipeline and seeder -> traces to Tempo, metrics to Mimir
+controller:
+  type: deployment
+  replicas: 1
+alloy:
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {memory: 512Mi}
+  extraPorts:
+    - {name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP}
+    - {name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP}
+  configMap:
+    create: true
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      // ------------------------------------------------------------------ metrics
+      prometheus.remote_write "mimir" {
+        endpoint {
+          url = "http://mimir.observability.svc.cluster.local:9009/api/v1/push"
+        }
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // Pods opt in with prometheus.io/scrape=true (+ port/path) and name themselves with
+      // medallion.io/component, which becomes the `component` label used by every dashboard.
+      discovery.relabel "annotated_pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          regex         = "true"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_phase"]
+          regex         = "Pending|Succeeded|Failed|Completed"
+          action        = "drop"
+        }
+        rule {
+          source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+          regex         = "(.+?)(?::\\d+)?;(\\d+)"
+          replacement   = "$1:$2"
+          target_label  = "__address__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_medallion_io_component"]
+          target_label  = "component"
+        }
+        // one target per pod even when a pod declares several container ports
+        rule {
+          regex  = "__meta_kubernetes_pod_container_.*"
+          action = "labeldrop"
+        }
+      }
+
+      prometheus.scrape "annotated_pods" {
+        targets         = discovery.relabel.annotated_pods.output
+        job_name        = "annotated-pods"
+        scrape_interval = "15s"
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // Container CPU/memory from each kubelet (through the API server proxy).
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+
+      discovery.relabel "cadvisor" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          replacement  = "kubernetes.default.svc:443"
+          target_label = "__address__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          regex         = "(.+)"
+          replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+          target_label  = "__metrics_path__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets           = discovery.relabel.cadvisor.output
+        job_name          = "cadvisor"
+        scheme            = "https"
+        scrape_interval   = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config {
+          ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+          insecure_skip_verify = false
+        }
+        forward_to = [prometheus.relabel.cadvisor_keep.receiver]
+      }
+
+      prometheus.relabel "cadvisor_keep" {
+        rule {
+          source_labels = ["__name__"]
+          regex         = "container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_oom_events_total|container_network_receive_bytes_total|container_network_transmit_bytes_total"
+          action        = "keep"
+        }
+        forward_to = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // kube-state-metrics: pod phase, readiness, restarts.
+      discovery.kubernetes "ksm" {
+        role = "service"
+        namespaces {
+          names = ["observability"]
+        }
+        selectors {
+          role  = "service"
+          label = "app.kubernetes.io/name=kube-state-metrics"
+        }
+      }
+
+      prometheus.scrape "ksm" {
+        targets         = discovery.kubernetes.ksm.targets
+        job_name        = "kube-state-metrics"
+        scrape_interval = "30s"
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // The LGTM services themselves.
+      prometheus.scrape "lgtm" {
+        targets = [
+          {"__address__" = "mimir.observability.svc.cluster.local:9009", "component" = "mimir"},
+          {"__address__" = "loki.observability.svc.cluster.local:3100",  "component" = "loki"},
+          {"__address__" = "tempo.observability.svc.cluster.local:3200", "component" = "tempo"},
+          {"__address__" = "localhost:12345",                            "component" = "alloy"},
+        ]
+        job_name        = "lgtm"
+        scrape_interval = "30s"
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // ------------------------------------------------------------------ logs
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "kafka|data|processing|observability"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_medallion_io_component", "__meta_kubernetes_pod_label_medallion_io_component"]
+          separator     = ""
+          target_label  = "component"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_sparkoperator_k8s_io_app_name"]
+          target_label  = "spark_app"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_spark_role"]
+          target_label  = "spark_role"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_medallion_io_run_id"]
+          target_label  = "run_id"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.pods.receiver]
+      }
+
+      // Pipeline log lines carry level=, step= and trace_id=; promote level to a label and keep
+      // trace_id as structured metadata so Grafana can jump from a log line to its trace.
+      loki.process "pods" {
+        stage.regex {
+          expression = "(?P<level>INFO|WARN|WARNING|ERROR|DEBUG)\\s+run_id=(?P<run>\\S+)\\s+step=(?P<step>\\S+)\\s+trace_id=(?P<trace_id>[0-9a-f-]+)"
+        }
+        stage.labels {
+          values = {level = "", step = ""}
+        }
+        stage.structured_metadata {
+          values = {trace_id = ""}
+        }
+        forward_to = [loki.write.loki.receiver]
+      }
+
+      loki.write "loki" {
+        endpoint {
+          url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+      // ------------------------------------------------------------------ OTLP
+      otelcol.receiver.otlp "default" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          metrics = [otelcol.processor.batch.default.input]
+          traces  = [otelcol.processor.batch.default.input]
+        }
+      }
+
+      otelcol.processor.batch "default" {
+        timeout = "2s"
+        output {
+          metrics = [otelcol.exporter.prometheus.mimir.input]
+          traces  = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+
+      // Metric names are kept exactly as the code names them (no _total/_seconds added).
+      otelcol.exporter.prometheus "mimir" {
+        add_metric_suffixes = false
+        forward_to          = [prometheus.remote_write.mimir.receiver]
+      }
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "tempo.observability.svc.cluster.local:4317"
+          tls {
+            insecure = true
+          }
+        }
+      }

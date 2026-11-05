@@ -1,0 +1,6 @@
+# Installed into the Spark image (images/spark/Dockerfile). PySpark itself comes with the base image.
+PyMySQL==1.1.1
+pymongo==4.10.1
+opentelemetry-api==1.28.2
+opentelemetry-sdk==1.28.2
+opentelemetry-exporter-otlp-proto-http==1.28.2

@@ -1,0 +1,5 @@
+# Local unit tests. test_transform.py needs only pytest; test_spark_steps.py also needs PySpark 4.1
+# (Python >= 3.10, Java 17+) and downloads the Iceberg runtime from Maven Central on first run.
+-r requirements.txt
+pytest==8.3.3
+pyspark==4.1.4

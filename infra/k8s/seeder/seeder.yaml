@@ -1,0 +1,34 @@
+# The seeder: initial ~5k Users, waits for the Debezium snapshot, then a steady stream of changes.
+# `make seed-pause` scales it to 0 (needed before `make verify`); `make seed` scales it back.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seeder
+  namespace: processing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: seeder}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seeder
+        medallion.io/component: seeder
+    spec:
+      containers:
+        - name: seeder
+          image: medallion/seeder:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: MONGO_URI, value: "mongodb://mongo-0.mongo.data.svc.cluster.local:27017/?replicaSet=rs0"}
+            - {name: MONGO_DB, value: app}
+            - {name: MONGO_COLLECTION, value: users}
+            - {name: INITIAL_USERS, value: "5000"}
+            - {name: CHANGES_PER_SECOND, value: "2"}
+            - {name: SNAPSHOT_GATE_URL, value: "http://connect-metrics.kafka.svc.cluster.local:9404/metrics"}
+            - {name: NEW_ATTRIBUTES, value: ""}
+            - {name: NEW_ATTRIBUTE_AFTER_SECONDS, value: "0"}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://alloy.observability.svc.cluster.local:4318"}
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {memory: 256Mi}

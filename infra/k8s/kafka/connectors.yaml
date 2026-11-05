@@ -1,0 +1,53 @@
+# Source: MongoDB change streams -> topic cdc.app.users (topic = <topic.prefix>.<db>.<collection>).
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: mongo-source
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: medallion-connect
+spec:
+  class: io.debezium.connector.mongodb.MongoDbConnector
+  tasksMax: 1
+  state: running
+  config:
+    mongodb.connection.string: mongodb://mongo-0.mongo.data.svc.cluster.local:27017/?replicaSet=rs0
+    topic.prefix: cdc
+    collection.include.list: app.users
+    # Updates carry the full current document (which may already reflect a later change, or be null
+    # when the User was deleted in the meantime). See GLOSSARY "Change Event".
+    capture.mode: change_streams_update_full
+    snapshot.mode: initial
+    # Deletes are Change Events with op=d; no tombstone follows them (the sink would choke on nulls).
+    tombstones.on.delete: false
+    errors.log.enable: true
+---
+# Sink: cdc.app.users -> s3://bronze/topics/cdc.app.users/dt=YYYY-MM-DD/hr=HH/<topic>-<partition>-<start_offset>.parquet
+# Append-only. Each file carries key, value, Kafka offset and timestamp; the partition is in the name.
+# Path-style addressing is switched on by the connector whenever aws.s3.endpoint is set.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: bronze-s3-sink
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: medallion-connect
+spec:
+  class: io.aiven.kafka.connect.s3.AivenKafkaConnectS3SinkConnector
+  tasksMax: 3
+  state: running
+  config:
+    topics: cdc.app.users
+    aws.access.key.id: ${env:S3_ACCESS_KEY}
+    aws.secret.access.key: ${env:S3_SECRET_KEY}
+    aws.s3.region: ${env:S3_REGION}
+    aws.s3.endpoint: http://seaweedfs-s3.data.svc.cluster.local:8333
+    aws.s3.bucket.name: bronze
+    format.output.type: parquet
+    format.output.fields: key,value,offset,timestamp
+    format.output.envelope: true
+    file.compression.type: none
+    file.name.template: "topics/{{topic}}/dt={{timestamp:unit=yyyy}}-{{timestamp:unit=MM}}-{{timestamp:unit=dd}}/hr={{timestamp:unit=HH}}/{{topic}}-{{partition:padding=true}}-{{start_offset:padding=true}}.parquet"
+    timestamp.source: wallclock
+    timestamp.timezone: UTC
+    errors.log.enable: true

@@ -1,0 +1,84 @@
+# Prometheus-format rules evaluated by the Mimir ruler (tenant `anonymous`). No notification
+# channel: firing alerts show up in Grafana (Alerting > Alert rules, and the Platform health dashboard).
+# Each alert's `runbook` points at the section of docs/how-to/operate-and-debug.md to follow.
+groups:
+  - name: medallion-cdc
+    interval: 30s
+    rules:
+      - alert: CDCLagHigh
+        expr: max(debezium_metrics_millisecondsbehindsource{context="streaming"}) > 300000
+        for: 2m
+        labels: {severity: warning, component: kafka-connect}
+        annotations:
+          summary: "Debezium is {{ $value | humanize }}ms behind MongoDB (> 5 min)"
+          runbook: "docs/how-to/operate-and-debug.md#cdc-lag-is-high"
+
+      - alert: ConnectorNotRunning
+        expr: |
+          max by (connector) (kafka_connect_connector_status{status!="running"}) > 0
+          or max by (connector) (kafka_connect_connector_task_status{status!="running"}) > 0
+        for: 2m
+        labels: {severity: critical, component: kafka-connect}
+        annotations:
+          summary: "Kafka Connect connector {{ $labels.connector }} is not RUNNING"
+          runbook: "docs/how-to/operate-and-debug.md#a-connector-is-not-running"
+
+      - alert: ConnectorMissing
+        expr: |
+          absent(kafka_connect_connector_status{connector="mongo-source", status="running"})
+          or absent(kafka_connect_connector_status{connector="bronze-s3-sink", status="running"})
+        for: 5m
+        labels: {severity: critical, component: kafka-connect}
+        annotations:
+          summary: "A connector (mongo-source or bronze-s3-sink) reports no RUNNING status"
+          runbook: "docs/how-to/operate-and-debug.md#a-connector-is-not-running"
+
+      - alert: BronzeSinkLagging
+        expr: sum(kafka_consumergroup_lag{consumergroup="connect-bronze-s3-sink"}) > 10000
+        for: 10m
+        labels: {severity: warning, component: kafka-connect}
+        annotations:
+          summary: "The bronze S3 sink is {{ $value }} messages behind the CDC topic"
+          runbook: "docs/how-to/operate-and-debug.md#bronze-is-not-getting-new-files"
+
+  - name: medallion-pipeline
+    interval: 30s
+    rules:
+      - alert: PipelineRunFailed
+        expr: last_over_time(medallion_pipeline_last_run_success[1d]) == 0
+        labels: {severity: critical, component: pipeline}
+        annotations:
+          summary: "The last Pipeline run failed (gold kept its previous version)"
+          runbook: "docs/how-to/operate-and-debug.md#a-pipeline-run-failed"
+
+      - alert: DataCheckFailed
+        expr: last_over_time(medallion_check_passed[1d]) == 0
+        labels: {severity: critical, component: pipeline}
+        annotations:
+          summary: "Data check {{ $labels.check }} failed in the last run"
+          runbook: "docs/how-to/operate-and-debug.md#a-data-check-failed"
+
+      - alert: GoldStale
+        expr: time() - last_over_time(medallion_gold_last_build_timestamp_seconds[7d]) > 3600
+        for: 5m
+        labels: {severity: info, component: pipeline}
+        annotations:
+          summary: "Gold was last built {{ $value | humanizeDuration }} ago"
+          runbook: "docs/how-to/operate-and-debug.md#gold-is-stale"
+
+  - name: medallion-platform
+    rules:
+      - alert: ComponentDown
+        expr: up{component!=""} == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.component }} ({{ $labels.pod }}) is not answering its metrics scrape"
+          runbook: "docs/how-to/operate-and-debug.md#component-checklist"
+
+      - alert: PodRestarting
+        expr: increase(kube_pod_container_status_restarts_total{namespace=~"kafka|data|processing|observability"}[15m]) > 2
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted {{ $value }} times in 15 min"
+          runbook: "docs/how-to/operate-and-debug.md#a-pod-keeps-restarting"

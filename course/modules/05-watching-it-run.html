@@ -1,0 +1,171 @@
+<section class="module" id="module-5" style="background: var(--color-bg-warm)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">05</span>
+      <h1 class="module-title">Watching it run, and when it breaks</h1>
+      <p class="module-subtitle">Monitoring, the road from laptop to EKS, and the things to test before writing any real code.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">A hospital monitor for data</h2>
+        <p>A patient monitor shows heart rate, a printout records events, and an alarm beeps when something crosses a line. The <span class="term" data-definition="LGTM is Grafana's monitoring stack: Loki (logs), Grafana (dashboards), Tempo (traces), Mimir (metrics). All four run locally in this project.">LGTM stack</span> plays all three roles for our platform.</p>
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+            <div class="pattern-icon" style="background: var(--color-actor-1)">📈</div>
+            <h4 class="pattern-title">Metrics → Mimir</h4>
+            <p class="pattern-desc">Numbers over time: Kafka lag, run durations, rows processed. These are the vital signs.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+            <div class="pattern-icon" style="background: var(--color-actor-4)">📜</div>
+            <h4 class="pattern-title">Logs → Loki</h4>
+            <p class="pattern-desc">Every line each program prints. Where you read the actual error.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+            <div class="pattern-icon" style="background: var(--color-actor-3)">🧵</div>
+            <h4 class="pattern-title">Traces → Tempo</h4>
+            <p class="pattern-desc">One <span class="term" data-definition="A trace is a timeline of one operation broken into 'spans' (steps), so you can see which step was slow or failed.">trace</span> per Pipeline run, with a span per step: bronze_to_silver, checks, silver_to_gold.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+            <div class="pattern-icon" style="background: var(--color-actor-2)">🖥️</div>
+            <h4 class="pattern-title">Grafana</h4>
+            <p class="pattern-desc">The screen where all three come together, as dashboards stored as code in the repo.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">How a run reports itself</h2>
+        <p>Batch jobs start and finish quickly, so nothing can "poll" them in time. Instead, each run <em>pushes</em> its own report to one collector, <span class="term" data-definition="Grafana Alloy is a single collector program: it scrapes metrics, tails logs and receives traces, then forwards each to the right storage.">Alloy</span>.</p>
+
+        <div class="flow-animation" data-steps='[
+          {"highlight":"flow-m5a1","label":"A Pipeline run finishes. Each step timed itself and counted the rows it read and wrote."},
+          {"highlight":"flow-m5a2","label":"The Spark driver sends spans and metrics over OTLP to Alloy.","packet":true,"from":"m5a1","to":"m5a2"},
+          {"highlight":"flow-m5a3","label":"Alloy forwards metrics (duration, rows read, High-Water Mark, check results) to Mimir.","packet":true,"from":"m5a2","to":"m5a3"},
+          {"highlight":"flow-m5a4","label":"Alloy forwards the run trace to Tempo. One span per step.","packet":true,"from":"m5a2","to":"m5a4"},
+          {"highlight":"flow-m5a5","label":"Grafana shows the Medallion Pipeline dashboard: CDC lag, Pipeline Lag, freshness, run durations, check results.","packet":true,"from":"m5a3","to":"m5a5"}
+        ]'>
+          <div class="flow-actors">
+            <div class="flow-actor" id="flow-m5a1"><div class="flow-actor-icon">⚡</div><span>Pipeline run</span></div>
+            <div class="flow-actor" id="flow-m5a2"><div class="flow-actor-icon">🛰️</div><span>Alloy</span></div>
+            <div class="flow-actor" id="flow-m5a3"><div class="flow-actor-icon">📈</div><span>Mimir</span></div>
+            <div class="flow-actor" id="flow-m5a4"><div class="flow-actor-icon">🧵</div><span>Tempo</span></div>
+            <div class="flow-actor" id="flow-m5a5"><div class="flow-actor-icon">🖥️</div><span>Grafana</span></div>
+          </div>
+          <div class="flow-packet"></div>
+          <div class="flow-step-label">Click "Next Step" to begin</div>
+          <div class="flow-controls">
+            <button class="btn flow-next-btn">Next Step</button>
+            <button class="btn flow-reset-btn">Restart</button>
+            <span class="flow-progress"></span>
+          </div>
+        </div>
+
+        <p>The headline number is <strong>Pipeline Lag</strong>: the time from a change happening in MongoDB to it showing up in silver. If it climbs, the dashboard's earlier panels (CDC lag, bronze freshness) tell you which stage is behind.</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">An alarm, translated</h2>
+        <p>Alerts are rules stored in the repo. A <strong>design sketch</strong> of one:</p>
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line">- <span class="code-property">alert</span>: CdcLagHigh</span>
+<span class="code-line">  <span class="code-property">expr</span>: debezium_millis_behind_source &gt; <span class="code-number">300000</span></span>
+<span class="code-line">  <span class="code-property">for</span>: <span class="code-number">5m</span></span>
+<span class="code-line">  <span class="code-property">labels</span>: { <span class="code-property">severity</span>: <span class="code-string">warning</span> }</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">An alarm named "CDC lag is high".</p>
+              <p class="tl">Fire when Debezium is more than 5 minutes (300,000 ms) behind MongoDB…</p>
+              <p class="tl">…and has stayed that way for 5 minutes, so a short blip doesn't raise a false alarm.</p>
+              <p class="tl">Mark it as a warning. In this POC it only shows in Grafana. Nobody gets paged.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Laptop today, EKS tomorrow</h2>
+        <p>Every local piece was chosen because it has an AWS counterpart:</p>
+        <div class="badge-list">
+          <div class="badge-item"><code class="badge-code">kind</code><span class="badge-desc">→ Amazon EKS (managed Kubernetes)</span></div>
+          <div class="badge-item"><code class="badge-code">SeaweedFS</code><span class="badge-desc">→ Amazon S3, with IRSA for credentials</span></div>
+          <div class="badge-item"><code class="badge-code">Strimzi + Connect</code><span class="badge-desc">→ Amazon MSK + MSK Connect, or Strimzi on EKS</span></div>
+          <div class="badge-item"><code class="badge-code">Lakekeeper</code><span class="badge-desc">→ AWS Glue Data Catalog</span></div>
+          <div class="badge-item"><code class="badge-code">Spark Operator</code><span class="badge-desc">→ EMR on EKS</span></div>
+          <div class="badge-item"><code class="badge-code">StarRocks operator</code><span class="badge-desc">→ StarRocks on EKS (shared-data on S3)</span></div>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-icon">🔐</div>
+          <div class="callout-content">
+            <strong class="callout-title">The MCP server can write</strong>
+            <p>The official StarRocks <span class="term" data-definition="MCP (Model Context Protocol) is a standard way to give an AI assistant tools, such as running queries against a database.">MCP</span> server always exposes a <code>write_query</code> tool. The only protection is the database user: <code>mcp_reader</code> gets SELECT on <code>gold</code> and nothing else. When you connect an AI to data, enforce limits in the database, not just in the prompt.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Test the risky assumptions first</h2>
+        <p>Before building the whole thing, the plan starts with four small <span class="term" data-definition="A spike is a short, throwaway experiment to answer one risky question (does X actually work?) before you commit to building on it.">spikes</span>. Any of these failing changes the design:</p>
+        <div class="step-cards">
+          <div class="step-card"><div class="step-num">a</div><div class="step-body"><strong>Aiven sink on Kafka 4.3</strong><p>Parquet output, S3 path-style requests to SeaweedFS, and the <code>dt=/hr=</code> folder layout.</p></div></div>
+          <div class="step-card"><div class="step-num">b</div><div class="step-body"><strong>The MERGE adds New Attribute columns by itself</strong><p>Spark 4.1 + Iceberg 1.12 adding a <code>phone</code> column with no manual change.</p></div></div>
+          <div class="step-card"><div class="step-num">c</div><div class="step-body"><strong>StarRocks shared-data on SeaweedFS</strong><p>Plus the Spark connector writing a staging table that is then swapped in.</p></div></div>
+          <div class="step-card"><div class="step-num">d</div><div class="step-body"><strong>Mimir as one pod</strong><p>No official single-binary chart exists.</p></div></div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Debug it</h2>
+        <div class="quiz-container" id="quiz-module5">
+          <div class="quiz-question-block"
+               data-correct="a"
+               data-explanation-right="Yes. Fast, successful runs with stale results mean there's little new data to read. If Debezium is behind MongoDB, nothing downstream can be fresh. Start at the head of the river. CDC lag is exactly the first panel on the Medallion Pipeline dashboard."
+               data-explanation-wrong="Work from upstream to downstream. If silver is stale, first check whether fresh data is even reaching bronze.">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Pipeline Lag jumped to 40 minutes, but every Pipeline run in the last hour succeeded quickly. Where do you look first?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The CDC lag and connector status panels. Something upstream of the Pipeline</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The MERGE statement in bronze_to_silver</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>The gold tables in StarRocks</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Right. The trace shows which step took the time, and Loki has that step's log lines (driver and executors). Metrics tell you that something is wrong; traces and logs tell you where and why."
+               data-explanation-wrong="A single number (duration) says something is slow, not where. Which signal breaks a run into steps?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>The Pipeline run duration doubled overnight, but nothing failed. How do you find the culprit fastest?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Restart the StarRocks pods and see if it improves</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Double every memory setting and hope</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Open that run's trace in Tempo to find the slow step, then read its logs in Loki</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Exactly. The spike exists to catch this early. If it fails, the design has to change (for example, an explicit ALTER TABLE before the MERGE), and that's far cheaper to learn before the rest is built."
+               data-explanation-wrong="Spikes are about learning cheaply before committing. What does a failing spike tell you about the plan?">
+            <div class="scenario-block"><div class="scenario-context"><span class="scenario-label">Scenario</span><p>Spike (b) fails: the Iceberg MERGE won't add the <code>phone</code> column automatically. What's the right reaction?</p></div></div>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Ignore it and build everything anyway</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Revisit how New Attributes reach silver (and record the decision in an ADR) before building the rest</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Drop New Attributes from silver entirely without telling anyone</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module5')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module5')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>

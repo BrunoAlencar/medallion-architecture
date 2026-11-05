@@ -1,0 +1,146 @@
+# One-shot, idempotent StarRocks setup:
+#   * root password, storage volume on s3://gold, databases `gold` (Gold Metrics) and `ops` (Pipeline run log)
+#   * gold tables (the Pipeline builds *__staging copies and SWAPs them in)
+#   * users: pipeline (writes gold/ops), mcp_reader (SELECT on gold only), grafana_reader (SELECT on gold + ops)
+#   * optional external Iceberg catalog `lakehouse` so silver can be queried ad hoc from StarRocks
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: starrocks-init-sql
+  namespace: data
+data:
+  schema.sql: |
+    CREATE DATABASE IF NOT EXISTS gold;
+    CREATE DATABASE IF NOT EXISTS ops;
+
+    -- Non-deleted Users by country x status.
+    CREATE TABLE IF NOT EXISTS gold.users_by_country (
+      country    VARCHAR(128) NOT NULL,
+      status     VARCHAR(32)  NOT NULL,
+      user_count BIGINT       NOT NULL,
+      built_at   DATETIME     NOT NULL
+    ) DUPLICATE KEY(country, status)
+    DISTRIBUTED BY HASH(country) BUCKETS 1;
+
+    -- All Users (Deleted Users included) by Signup Date (created_at).
+    CREATE TABLE IF NOT EXISTS gold.daily_signups (
+      signup_date DATE     NOT NULL,
+      signups     BIGINT   NOT NULL,
+      built_at    DATETIME NOT NULL
+    ) DUPLICATE KEY(signup_date)
+    DISTRIBUTED BY HASH(signup_date) BUCKETS 1;
+
+    -- Non-deleted Users per status, plus one `deleted` row.
+    CREATE TABLE IF NOT EXISTS gold.user_status_summary (
+      status     VARCHAR(32) NOT NULL,
+      user_count BIGINT      NOT NULL,
+      built_at   DATETIME    NOT NULL
+    ) DUPLICATE KEY(status)
+    DISTRIBUTED BY HASH(status) BUCKETS 1;
+
+    -- One row per Pipeline run (success or failure). Read by the Grafana "Pipeline runs" table.
+    CREATE TABLE IF NOT EXISTS ops.pipeline_runs (
+      run_id        VARCHAR(64)   NOT NULL,
+      started_at    DATETIME      NOT NULL,
+      finished_at   DATETIME      NOT NULL,
+      status        VARCHAR(16)   NOT NULL,
+      steps         VARCHAR(256),
+      duration_s    DOUBLE,
+      rows_read     BIGINT,
+      rows_applied  BIGINT,
+      new_columns   VARCHAR(1024),
+      failed_checks VARCHAR(1024),
+      error         VARCHAR(4096),
+      trace_id      VARCHAR(64)
+    ) DUPLICATE KEY(run_id)
+    DISTRIBUTED BY HASH(run_id) BUCKETS 1;
+  users.sql: |
+    CREATE USER IF NOT EXISTS 'pipeline'@'%' IDENTIFIED BY '${STARROCKS_PIPELINE_PASSWORD}';
+    GRANT ALL ON DATABASE gold TO USER 'pipeline'@'%';
+    GRANT ALL ON ALL TABLES IN DATABASE gold TO USER 'pipeline'@'%';
+    GRANT ALL ON DATABASE ops TO USER 'pipeline'@'%';
+    GRANT ALL ON ALL TABLES IN DATABASE ops TO USER 'pipeline'@'%';
+
+    -- For mcp-server-starrocks (no read-only mode exists there, so this grant is the only guard).
+    CREATE USER IF NOT EXISTS 'mcp_reader'@'%' IDENTIFIED BY '${STARROCKS_MCP_READER_PASSWORD}';
+    GRANT SELECT ON ALL TABLES IN DATABASE gold TO USER 'mcp_reader'@'%';
+
+    -- For Grafana's MySQL data source (Gold Metrics + Pipeline runs dashboards).
+    CREATE USER IF NOT EXISTS 'grafana_reader'@'%' IDENTIFIED BY '${STARROCKS_GRAFANA_PASSWORD}';
+    GRANT SELECT ON ALL TABLES IN DATABASE gold TO USER 'grafana_reader'@'%';
+    GRANT SELECT ON ALL TABLES IN DATABASE ops TO USER 'grafana_reader'@'%';
+  storage-volume.sql: |
+    CREATE STORAGE VOLUME IF NOT EXISTS gold_volume
+    TYPE = S3
+    LOCATIONS = ("s3://gold/starrocks")
+    PROPERTIES (
+      "enabled" = "true",
+      "aws.s3.region" = "${S3_REGION}",
+      "aws.s3.endpoint" = "http://seaweedfs-s3.data.svc.cluster.local:8333",
+      "aws.s3.use_aws_sdk_default_behavior" = "false",
+      "aws.s3.use_instance_profile" = "false",
+      "aws.s3.access_key" = "${S3_ACCESS_KEY}",
+      "aws.s3.secret_key" = "${S3_SECRET_KEY}",
+      "aws.s3.enable_path_style_access" = "true"
+    );
+    SET gold_volume AS DEFAULT STORAGE VOLUME;
+  iceberg-catalog.sql: |
+    CREATE EXTERNAL CATALOG IF NOT EXISTS lakehouse
+    PROPERTIES (
+      "type" = "iceberg",
+      "iceberg.catalog.type" = "rest",
+      "iceberg.catalog.uri" = "http://lakekeeper.data.svc.cluster.local:8181/catalog",
+      "iceberg.catalog.warehouse" = "medallion",
+      "aws.s3.region" = "${S3_REGION}",
+      "aws.s3.endpoint" = "http://seaweedfs-s3.data.svc.cluster.local:8333",
+      "aws.s3.access_key" = "${S3_ACCESS_KEY}",
+      "aws.s3.secret_key" = "${S3_SECRET_KEY}",
+      "aws.s3.enable_path_style_access" = "true"
+    );
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: starrocks-init
+  namespace: data
+spec:
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: mysql:8.4
+          envFrom:
+            - secretRef: {name: medallion-credentials}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              FE=starrocks-fe-service.data.svc.cluster.local
+              render() { eval "cat <<__EOF__
+              $(cat "$1")
+              __EOF__"; }
+              sr() { mysql -h "$FE" -P 9030 -uroot "$@"; }
+              until mysql -h "$FE" -P 9030 -uroot -p"$STARROCKS_ROOT_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1 \
+                 || mysql -h "$FE" -P 9030 -uroot -e 'SELECT 1' >/dev/null 2>&1; do
+                echo "waiting for StarRocks FE"; sleep 5
+              done
+              # Set the root password once (a fresh cluster has none).
+              if mysql -h "$FE" -P 9030 -uroot -e 'SELECT 1' >/dev/null 2>&1; then
+                mysql -h "$FE" -P 9030 -uroot -e "SET PASSWORD FOR 'root' = PASSWORD('$STARROCKS_ROOT_PASSWORD');"
+                echo "root password set"
+              fi
+              export MYSQL_PWD="$STARROCKS_ROOT_PASSWORD"
+              until sr -N -e 'SHOW COMPUTE NODES' | grep -q true; do echo "waiting for a live CN"; sleep 5; done
+              render /sql/storage-volume.sql | sr
+              render /sql/schema.sql | sr
+              render /sql/users.sql | sr
+              render /sql/iceberg-catalog.sql | sr || echo "WARN: external Iceberg catalog not created (optional; see docs/how-to/operate-and-debug.md)"
+              sr -e 'SHOW DATABASES; SHOW STORAGE VOLUMES;'
+              echo "StarRocks init done"
+          volumeMounts:
+            - {name: sql, mountPath: /sql}
+      volumes:
+        - name: sql
+          configMap: {name: starrocks-init-sql}

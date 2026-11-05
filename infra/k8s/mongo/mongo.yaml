@@ -1,0 +1,96 @@
+# Operational source: MongoDB 8.0 as a single-node replica set (change streams need a replica set),
+# with the Percona mongodb_exporter as a sidecar on :9216.
+# No auth: this is a local POC. On EKS use Atlas or DocumentDB-compatible auth + a Debezium user.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: data
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: mongo}
+  ports:
+    - {name: mongo, port: 27017}
+    - {name: metrics, port: 9216}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: data
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: mongo}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: mongo}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9216"
+        prometheus.io/path: /metrics
+        medallion.io/component: mongodb
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:8.0
+          args: ["--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+          ports:
+            - {name: mongo, containerPort: 27017}
+          readinessProbe:
+            exec: {command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 384Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data/db}
+        - name: exporter
+          image: percona/mongodb_exporter:0.54.0
+          args:
+            - --mongodb.uri=mongodb://127.0.0.1:27017/admin?directConnection=true
+            - --collect-all
+            - --compatible-mode
+            - --web.listen-address=:9216
+          ports:
+            - {name: metrics, containerPort: 9216}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 5Gi}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-rs-init
+  namespace: data
+spec:
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: rs-init
+          image: mongo:8.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              HOST=mongo-0.mongo.data.svc.cluster.local:27017
+              until mongosh --quiet --host $HOST --eval "db.adminCommand('ping').ok" >/dev/null 2>&1; do
+                echo "waiting for mongo"; sleep 3
+              done
+              mongosh --quiet --host $HOST --eval '
+                try { rs.status(); print("replica set already initiated"); }
+                catch (e) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongo-0.mongo.data.svc.cluster.local:27017"}]}); print("rs.initiate done"); }
+              '
+              until mongosh --quiet --host $HOST --eval "db.hello().isWritablePrimary" | grep -q true; do
+                echo "waiting for PRIMARY"; sleep 2
+              done
+              echo "rs0 PRIMARY ready"

@@ -1,0 +1,157 @@
+<section class="module" id="module-1" style="background: var(--color-bg-warm)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">01</span>
+      <h1 class="module-title">One change, end to end</h1>
+      <p class="module-subtitle">What this platform is for, told through the story of one person changing their email address.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">What are we building?</h2>
+        <p>Somewhere there is an app with users. Its
+          <span class="term" data-definition="A database is an organised place where an app stores its information permanently, like a giant, searchable filing cabinet.">database</span>,
+          <span class="term" data-definition="MongoDB is a popular database that stores each record as a flexible 'document', a bit like a JSON file, instead of rows in a rigid table.">MongoDB</span>, is busy serving that app, so it is not the place to run heavy reports.</p>
+        <p>This project copies every change from that database into a separate
+          <span class="term" data-definition="A lakehouse is a data platform that keeps huge amounts of data as files in cheap cloud storage (the 'lake') but lets you query it like a tidy database (the 'house').">lakehouse</span>,
+          cleans it up in stages, and produces business numbers like "signups per day". The stages are called bronze, silver and gold. That three-stage pattern is the
+          <span class="term" data-definition="Medallion architecture is a way of organising data in three layers: bronze (raw, untouched), silver (cleaned, one current version of each thing) and gold (business-ready summaries).">medallion architecture</span>.</p>
+
+        <div class="pattern-cards">
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+            <div class="pattern-icon" style="background: var(--color-actor-4)">🥉</div>
+            <h4 class="pattern-title">Bronze</h4>
+            <p class="pattern-desc">Every change, exactly as it happened. Never edited, never deleted. Only ever appended to.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+            <div class="pattern-icon" style="background: var(--color-actor-2)">🥈</div>
+            <h4 class="pattern-title">Silver</h4>
+            <p class="pattern-desc">One row per user, showing their <em>current</em> state. Duplicates removed, deletes flagged.</p>
+          </div>
+          <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+            <div class="pattern-icon" style="background: var(--color-actor-1)">🥇</div>
+            <h4 class="pattern-title">Gold</h4>
+            <p class="pattern-desc">Summaries a business person asks for: users by country, daily signups, users per status.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">The bank-statement way of thinking</h2>
+        <p>Your bank keeps a <strong>statement</strong> (every single transaction, forever), shows you a <strong>balance</strong> (where you stand right now) and sends a <strong>yearly summary</strong> (spending by category). That is bronze, silver and gold.</p>
+        <div class="flow-steps">
+          <div class="flow-step"><div class="flow-step-num">🥉</div><p><strong>Statement</strong><br>+50, −20, +100… every line kept</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🥈</div><p><strong>Balance</strong><br>"You have 130 right now"</p></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step"><div class="flow-step-num">🥇</div><p><strong>Summary</strong><br>"You spent 40% on food"</p></div>
+        </div>
+        <div class="callout callout-accent">
+          <div class="callout-icon">💡</div>
+          <div class="callout-content">
+            <strong class="callout-title">Why keep the raw statement at all?</strong>
+            <p>If the balance is ever wrong, say from a bug in the cleaning code, you can rebuild it from the statement. Keeping an untouched, append-only history is what makes every later layer <em>re-buildable</em>. When you brief an AI, say "bronze is append-only, never mutate it".</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Follow Ana's email change</h2>
+        <p>Ana changes her email in the app. Click through to watch that single change travel all the way to gold.</p>
+
+        <div class="flow-animation" data-steps='[
+          {"highlight":"flow-m1a1","label":"Ana changes her email. MongoDB writes it and records the change in its oplog (its internal diary of every write)."},
+          {"highlight":"flow-m1a2","label":"Debezium is reading that diary. It turns the write into a Change Event (op = u, for update).","packet":true,"from":"m1a1","to":"m1a2"},
+          {"highlight":"flow-m1a3","label":"The Change Event is published to a Kafka topic, keyed by Ana&apos;s user id.","packet":true,"from":"m1a2","to":"m1a3"},
+          {"highlight":"flow-m1a4","label":"A sink connector batches events into a Parquet file and drops it in the bronze bucket. Appended, never rewritten.","packet":true,"from":"m1a3","to":"m1a4"},
+          {"highlight":"flow-m1a5","label":"A Pipeline run reads only new files, picks the winning event for Ana and updates her one row in silver.","packet":true,"from":"m1a4","to":"m1a5"},
+          {"highlight":"flow-m1a6","label":"Gold tables are rebuilt from silver and land in StarRocks, where dashboards and AI tools can query them.","packet":true,"from":"m1a5","to":"m1a6"}
+        ]'>
+          <div class="flow-actors">
+            <div class="flow-actor" id="flow-m1a1"><div class="flow-actor-icon">🍃</div><span>MongoDB</span></div>
+            <div class="flow-actor" id="flow-m1a2"><div class="flow-actor-icon">👂</div><span>Debezium</span></div>
+            <div class="flow-actor" id="flow-m1a3"><div class="flow-actor-icon">📬</div><span>Kafka</span></div>
+            <div class="flow-actor" id="flow-m1a4"><div class="flow-actor-icon">🥉</div><span>Bronze</span></div>
+            <div class="flow-actor" id="flow-m1a5"><div class="flow-actor-icon">🥈</div><span>Silver</span></div>
+            <div class="flow-actor" id="flow-m1a6"><div class="flow-actor-icon">🥇</div><span>Gold</span></div>
+          </div>
+          <div class="flow-packet"></div>
+          <div class="flow-step-label">Click "Next Step" to begin</div>
+          <div class="flow-controls">
+            <button class="btn flow-next-btn">Next Step</button>
+            <button class="btn flow-reset-btn">Restart</button>
+            <span class="flow-progress"></span>
+          </div>
+        </div>
+
+        <p>That whole technique, copying every change out of a database as it happens, is called
+          <span class="term" data-definition="CDC (Change Data Capture) means watching a database for every insert, update and delete and sending each one somewhere else as an event, instead of copying the whole table over and over.">CDC</span>
+          (Change Data Capture).</p>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">What a Change Event actually looks like</h2>
+        <p>This is a <strong>design sketch</strong>, not code from the repo yet (nothing is built). It shows the shape of one event Debezium produces for Ana.</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line">{</span>
+<span class="code-line">  <span class="code-property">"op"</span>: <span class="code-string">"u"</span>,</span>
+<span class="code-line">  <span class="code-property">"after"</span>: <span class="code-string">"{\"_id\":\"66a1…\",\"email\":\"ana@new.com\",\"status\":\"active\"}"</span>,</span>
+<span class="code-line">  <span class="code-property">"source"</span>: { <span class="code-property">"ts_ms"</span>: <span class="code-number">1762370000123</span>, <span class="code-property">"ord"</span>: <span class="code-number">4</span> },</span>
+<span class="code-line">  <span class="code-property">"offset"</span>: <span class="code-number">8812</span></span>
+<span class="code-line">}</span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">One event, wrapped in curly braces (that's <span class="term" data-definition="JSON is a plain-text format for structured data: names in quotes, followed by values, wrapped in curly braces. Almost every system can read and write it.">JSON</span>).</p>
+              <p class="tl">What happened: <code>u</code> = update. Others are <code>c</code> create, <code>d</code> delete, <code>r</code> read during the first snapshot.</p>
+              <p class="tl">The whole user document <em>after</em> the change, packed as text. New fields can appear here without breaking anything.</p>
+              <p class="tl">When it happened (milliseconds) and its order within that moment. Module 3 is all about these two numbers.</p>
+              <p class="tl">Its position in the Kafka queue. Used to remember "how far have I read?"</p>
+              <p class="tl">End of the event.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Check your understanding</h2>
+        <div class="quiz-container" id="quiz-module1">
+          <div class="quiz-question-block"
+               data-correct="b"
+               data-explanation-right="Exactly. Bronze still holds every change exactly as it arrived, so you fix the code and rebuild silver from it. That is the whole point of an append-only raw layer."
+               data-explanation-wrong="Not quite. Think about which layer is the untouched source of truth. Silver and gold are derived; bronze is the statement you can always recompute from.">
+            <h3 class="quiz-question">A bug in the cleaning code wrote wrong countries into silver for a week. What is the safest fix?</h3>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Edit the wrong rows in bronze so the mistake disappears</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Fix the code, then rebuild silver (and gold) from bronze</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Ask MongoDB to resend every user</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <div class="quiz-question-block"
+               data-correct="c"
+               data-explanation-right="Right. Heavy analytical queries on the live app database would slow down the real app for real users. CDC copies changes out so analytics can run somewhere else."
+               data-explanation-wrong="Not quite. The key worry is load: the operational database is busy serving the app, and big reports could make it slow for users.">
+            <h3 class="quiz-question">Your manager asks: "Why not just run the reports directly on MongoDB?" What's the best answer?</h3>
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="a" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>MongoDB can't count things</span></button>
+              <button class="quiz-option" data-value="b" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Reports are only allowed on files in S3</span></button>
+              <button class="quiz-option" data-value="c" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Big reports would compete with the live app for the same database, and history would be lost on every update</span></button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+
+          <button class="quiz-check-btn" onclick="checkQuiz('quiz-module1')">Check Answers</button>
+          <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module1')">Try Again</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>

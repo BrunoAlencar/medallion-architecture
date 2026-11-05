@@ -1,0 +1,160 @@
+<section class="module" id="module-2" style="background: var(--color-bg)">
+  <div class="module-content">
+    <header class="module-header animate-in">
+      <span class="module-number">02</span>
+      <h1 class="module-title">Meet the cast</h1>
+      <p class="module-subtitle">A handful of components, one newsroom. Knowing who does what lets you tell an AI exactly where a change belongs.</p>
+    </header>
+
+    <div class="module-body">
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Think of it as a newsroom</h2>
+        <p>A newsroom has a stenographer in the courtroom, a wire service that moves stories, an archive in the basement, an editor who rewrites, and a newsstand where readers buy the paper. Our platform has exactly those jobs.</p>
+        <div class="icon-rows">
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-5)">🍃</div><div><strong>MongoDB: the courtroom</strong><p>Where things actually happen. The app writes users here.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">👂</div><div><strong>Debezium: the stenographer</strong><p>Writes down every change MongoDB makes, in order, without interrupting.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-3)">📬</div><div><strong>Kafka: the wire service</strong><p>A durable queue that carries events from the people who write them to whoever reads them.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div><div><strong>Aiven S3 sink + SeaweedFS: the archive</strong><p>The sink files each batch of events into the bronze shelf of an S3-compatible store.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-2)">✍️</div><div><strong>PySpark: the editor</strong><p>Turns the raw archive into a clean silver table, then writes the gold summaries.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">📰</div><div><strong>StarRocks: the newsstand</strong><p>A fast query engine where gold lives and where people (and AI tools) read results.</p></div></div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">The full map: click any piece</h2>
+        <p>Everything runs inside a local
+          <span class="term" data-definition="Kubernetes is a system that runs and supervises many containers (packaged programs) across machines, restarting them if they crash. Amazon's managed version is called EKS.">Kubernetes</span>
+          cluster created by
+          <span class="term" data-definition="kind ('Kubernetes in Docker') creates a small Kubernetes cluster on your laptop by running each 'machine' as a Docker container. Great for practising what you'd later run on EKS.">kind</span>, so it behaves like Amazon EKS without the bill.</p>
+
+        <div class="arch-diagram">
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Source &amp; capture</h4>
+            <div class="arch-component" data-desc="MongoDB 8 in replica-set mode (needed for change streams). A seeder script creates ~5,000 fake users, then keeps inserting, updating and deleting so there is always something to capture."><div class="arch-icon">🍃</div><span>MongoDB</span></div>
+            <div class="arch-component" data-desc="Debezium runs inside Kafka Connect. It reads MongoDB's change stream and emits one Change Event per write, keeping the full envelope (op, after, source timing)."><div class="arch-icon">👂</div><span>Debezium</span></div>
+            <div class="arch-component" data-desc="Kafka 4.3, run by the Strimzi operator. Topic cdc.app.users has 3 partitions, keyed by user id, so all events for one user stay in one partition, in order."><div class="arch-icon">📬</div><span>Kafka (Strimzi)</span></div>
+          </div>
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Storage</h4>
+            <div class="arch-component" data-desc="The Aiven S3 sink connector writes Kafka events as Parquet files into the bronze bucket. It needs no Schema Registry: each message carries its own schema."><div class="arch-icon">📦</div><span>Aiven S3 sink</span></div>
+            <div class="arch-component" data-desc="SeaweedFS stands in for Amazon S3 locally. Buckets: bronze, silver, gold, plus loki, tempo and mimir for monitoring data. MinIO was the first idea but its images are no longer published."><div class="arch-icon">🗄️</div><span>SeaweedFS</span></div>
+            <div class="arch-component" data-desc="Lakekeeper is an Iceberg REST catalog: the index card system that knows which files make up each Iceberg table. In AWS this role is played by the Glue Data Catalog."><div class="arch-icon">🗂️</div><span>Lakekeeper</span></div>
+          </div>
+          <div class="arch-zone">
+            <h4 class="arch-zone-label">Processing &amp; serving</h4>
+            <div class="arch-component" data-desc="The Spark Operator watches for SparkApplication resources and starts a driver pod plus executor pods for each run, then cleans them up. Locally it plays the role EMR on EKS plays in AWS."><div class="arch-icon">🎛️</div><span>Spark Operator</span></div>
+            <div class="arch-component" data-desc="The PySpark Pipeline: the only transformation code. It reads new bronze files, upserts silver as an Iceberg table, runs data checks, and writes gold into StarRocks."><div class="arch-icon">⚡</div><span>PySpark Pipeline</span></div>
+            <div class="arch-component" data-desc="StarRocks 4.1 in shared-data mode (its data files live in object storage). It only serves gold (database gold), and will be queried by an MCP server later through a read-only user."><div class="arch-icon">📰</div><span>StarRocks</span></div>
+          </div>
+          <div class="arch-description">Click any component to learn what it does</div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Overheard in the group chat</h2>
+        <p>Here is how the cast coordinates when Ana is deleted from the app.</p>
+
+        <div class="chat-window" id="chat-module2">
+          <div class="chat-messages">
+            <div class="chat-message" data-msg="0" data-sender="mongo" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-5)">🍃</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-5)">MongoDB</span><p>Heads up, the app just deleted user 66a1 (Ana). It's in my oplog.</p></div>
+            </div>
+            <div class="chat-message" data-msg="1" data-sender="debezium" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-1)">👂</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-1)">Debezium</span><p>Got it. Emitting a Change Event with op = "d". There's no "after" document, she's gone. I'm skipping the empty "tombstone" message, the sink would choke on it.</p></div>
+            </div>
+            <div class="chat-message" data-msg="2" data-sender="kafka" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-3)">📬</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-3)">Kafka</span><p>Stored in partition 1, offset 8813. Same partition as all her earlier events, so her history stays in order.</p></div>
+            </div>
+            <div class="chat-message" data-msg="3" data-sender="sink" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-4)">📦</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-4)">Aiven sink</span><p>Batched it with 40 other events into a new Parquet file in bronze. I never touch old files.</p></div>
+            </div>
+            <div class="chat-message" data-msg="4" data-sender="pyspark" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-2)">⚡</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-2)">PySpark</span><p>Next run I'll read past my High-Water Mark, see the delete, and set is_deleted = true on her silver row. I won't remove the row.</p></div>
+            </div>
+            <div class="chat-message" data-msg="5" data-sender="starrocks" style="display:none">
+              <div class="chat-avatar" style="background: var(--color-actor-1)">📰</div>
+              <div class="chat-bubble"><span class="chat-sender" style="color: var(--color-actor-1)">StarRocks</span><p>And in gold she disappears from "users by country", but stays counted in "daily signups". She <em>did</em> sign up that day.</p></div>
+            </div>
+          </div>
+          <div class="chat-typing" style="display:none">
+            <div class="chat-avatar" id="chat-module2-typing-avatar">?</div>
+            <div class="chat-typing-dots"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>
+          </div>
+          <div class="chat-controls">
+            <button class="btn chat-next-btn">Next Message</button>
+            <button class="btn chat-all-btn">Play All</button>
+            <button class="btn chat-reset-btn">Replay</button>
+            <span class="chat-progress"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">How the archivist is configured</h2>
+        <p>Components like the sink aren't programmed, they're <em>configured</em>. A <strong>design sketch</strong> of the bronze sink's settings (based on the plan, not yet tested):</p>
+
+        <div class="translation-block animate-in">
+          <div class="translation-code">
+            <span class="translation-label">DESIGN SKETCH</span>
+<pre><code><span class="code-line"><span class="code-property">kind</span>: KafkaConnector</span>
+<span class="code-line"><span class="code-property">spec</span>:</span>
+<span class="code-line">  <span class="code-property">config</span>:</span>
+<span class="code-line">    <span class="code-property">topics</span>: <span class="code-string">cdc.app.users</span></span>
+<span class="code-line">    <span class="code-property">value.converter.schemas.enable</span>: <span class="code-keyword">true</span></span>
+<span class="code-line">    <span class="code-property">format.output.type</span>: <span class="code-string">parquet</span></span>
+<span class="code-line">    <span class="code-property">format.output.fields</span>: <span class="code-string">key,value,offset,timestamp</span></span>
+<span class="code-line">    <span class="code-property">aws.s3.endpoint</span>: <span class="code-string">http://seaweedfs-s3.data:8333</span></span></code></pre>
+          </div>
+          <div class="translation-english">
+            <span class="translation-label">PLAIN ENGLISH</span>
+            <div class="translation-lines">
+              <p class="tl">"Please create a connector." This is a <span class="term" data-definition="A Kubernetes resource is a YAML description of something you want to exist (a database, a connector…). An operator watches these files and makes reality match them.">Kubernetes resource</span>, handled by the Strimzi operator.</p>
+              <p class="tl">The description of what we want…</p>
+              <p class="tl">…its settings:</p>
+              <p class="tl">Listen to the users' Change Event topic.</p>
+              <p class="tl">Every message carries its own description of its fields, so no separate Schema Registry is needed.</p>
+              <p class="tl">Write <span class="term" data-definition="Parquet is a compressed, column-by-column file format. Analytics engines read it far faster than JSON because they can skip the columns they don't need.">Parquet</span> files, which StarRocks and Spark both read natively.</p>
+              <p class="tl">Store the Kafka offset next to each event, so pipelines can remember how far they've read.</p>
+              <p class="tl">Send files to our local S3 stand-in instead of Amazon.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-info">
+          <div class="callout-icon">🧭</div>
+          <div class="callout-content">
+            <strong class="callout-title">Why not plain JSON files in bronze?</strong>
+            <p>We checked StarRocks' source code: its <code>FILES()</code> reader handles Parquet, ORC, CSV and Avro, but not JSON. A detail like that decides the design, which is why it's written up in ADR-0004.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
+        <h2 class="screen-heading">Match each job to its owner</h2>
+        <div class="dnd-container" id="dnd-module2">
+          <div class="dnd-chips">
+            <div class="dnd-chip" draggable="true" data-answer="debezium">Debezium</div>
+            <div class="dnd-chip" draggable="true" data-answer="kafka">Kafka</div>
+            <div class="dnd-chip" draggable="true" data-answer="lakekeeper">Lakekeeper</div>
+            <div class="dnd-chip" draggable="true" data-answer="starrocks">StarRocks</div>
+          </div>
+          <div class="dnd-zones">
+            <div class="dnd-zone" data-correct="debezium"><p class="dnd-zone-label">New users stopped showing up in bronze, and MongoDB is fine. Whose "reading the diary" job should you check first?</p><div class="dnd-zone-target">Drop here</div></div>
+            <div class="dnd-zone" data-correct="kafka"><p class="dnd-zone-label">You want events for one user to always stay in order, even with several readers.</p><div class="dnd-zone-target">Drop here</div></div>
+            <div class="dnd-zone" data-correct="lakekeeper"><p class="dnd-zone-label">Spark can see the silver files but says the Iceberg table "doesn't exist".</p><div class="dnd-zone-target">Drop here</div></div>
+            <div class="dnd-zone" data-correct="starrocks"><p class="dnd-zone-label">An AI assistant (via MCP) should answer "how many active users in Brazil?"</p><div class="dnd-zone-target">Drop here</div></div>
+          </div>
+          <button class="btn" onclick="checkDnD('dnd-module2')">Check Matches</button>
+          <button class="btn" onclick="resetDnD('dnd-module2')">Reset</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</section>
