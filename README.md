@@ -21,9 +21,9 @@ Observability: Alloy (scrape + pod logs + OTLP) → Mimir · Loki · Tempo → G
 Prerequisites: a Docker runtime with **16 GB / 8 CPUs**, plus `brew install kind kubectl helm`.
 
 ```bash
-make prereqs          # check the tools and the Docker memory
-make cluster images   # kind cluster (1 control plane + 2 workers), build and load the 3 images
-make up               # storage, LGTM, MongoDB, Kafka + CDC, StarRocks, Spark Operator, seeder (~15-20 min the first time)
+make prereqs          # check the tools and that Docker is running with enough memory
+make up               # kind cluster, the 3 local images, storage, LGTM, MongoDB, Kafka + CDC, StarRocks,
+                      # Spark Operator, seeder (~15-20 min the first time; safe to re-run after a failure)
 make status           # every component, checked in data-flow order
 make run-pipeline     # one Pipeline run: bronze → silver → gold
 make ui               # Grafana http://localhost:3000 (admin/admin), Kafka UI :8081, Lakekeeper :8181/ui, ...

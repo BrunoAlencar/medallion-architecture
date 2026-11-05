@@ -8,21 +8,42 @@ FAILS=0
 fail() { bad "$1"; [ -n "${2:-}" ] && hint "$2"; FAILS=$((FAILS+1)); }
 G="guide › Component checklist ›"
 
-# --- one probe pod per check family, so we do not depend on tools inside product images ------
+# --- two long-lived probe pods (curl, mysql), so we do not depend on tools inside product images.
+# Started once and reached with `kubectl exec`: a `kubectl run --rm -i` per check races (a fast
+# curl exits before kubectl attaches, and the output is lost) and starts ~15 pods per run.
+# medallion.io/probe=true lets them through the Connect REST NetworkPolicy (infra/k8s/kafka/connect.yaml).
+PROBE_NS=data
+PROBE_HTTP="probe-http-$$"
+PROBE_SQL="probe-sql-$$"
+cleanup_probes() { kubectl -n "$PROBE_NS" delete pod "$PROBE_HTTP" "$PROBE_SQL" --ignore-not-found --wait=false --grace-period=1 >/dev/null 2>&1 || true; }
+trap cleanup_probes EXIT
+for p in "$PROBE_HTTP curlimages/curl:8.11.1" "$PROBE_SQL mysql:8.4"; do
+  set -- $p   # name image; sleep is a safety net if the EXIT trap never runs
+  kubectl -n "$PROBE_NS" run "$1" --image="$2" --restart=Never --labels=medallion.io/probe=true \
+    --command -- sleep 600 >/dev/null
+done
+PROBES_READY=1
+kubectl -n "$PROBE_NS" wait --for=condition=Ready pod "$PROBE_HTTP" "$PROBE_SQL" --timeout=180s >/dev/null 2>&1 \
+  || PROBES_READY=0
 probe_http() {  # probe_http <url> -> body (empty on failure); runs inside the cluster
-  kubectl -n observability run "probe-$RANDOM" --rm -i --quiet --restart=Never \
-    --image=curlimages/curl:8.11.1 --command -- curl -s -m 10 "$1" 2>/dev/null || true
+  kubectl -n "$PROBE_NS" exec "$PROBE_HTTP" -- curl -s -m 10 "$1" 2>/dev/null || true
 }
-sr_sql() {  # sr_sql <sql> -> tab-separated rows
-  kubectl -n data run "probe-$RANDOM" --rm -i --quiet --restart=Never --image=mysql:8.4 \
-    --env="MYSQL_PWD=${STARROCKS_ROOT_PASSWORD}" --command -- \
+probe_sh() {    # probe_sh <script> -> stdout of a sh script run in the curl pod
+  kubectl -n "$PROBE_NS" exec "$PROBE_HTTP" -- sh -c "$1" 2>/dev/null || true
+}
+sr_sql() {      # sr_sql <sql> -> tab-separated rows
+  kubectl -n "$PROBE_NS" exec "$PROBE_SQL" -- env MYSQL_PWD="${STARROCKS_ROOT_PASSWORD}" \
     mysql -h starrocks-fe-service -P 9030 -uroot -N -e "$1" 2>/dev/null || true
 }
 
 info "Kubernetes"
-not_ok="$(kubectl get pods -A --no-headers 2>/dev/null | awk '$1 ~ /^(kafka|data|processing|observability)$/ && $4 !~ /Running|Completed|Succeeded/ {print $1"/"$2" ("$4")"}')"
+not_ok="$(kubectl get pods -A --no-headers 2>/dev/null | awk '$1 ~ /^(kafka|data|processing|observability)$/ && $2 !~ /^probe-/ && $4 !~ /Running|Completed|Succeeded/ {print $1"/"$2" ("$4")"}')"
 if [ -z "$not_ok" ]; then ok "all pods Running/Completed"; else
   while read -r p; do fail "pod $p" "guide › A pod keeps restarting"; done <<<"$not_ok"; fi
+if [ "$PROBES_READY" = 0 ]; then
+  fail "probe pods $PROBE_NS/$PROBE_HTTP, $PROBE_SQL not Ready in 180s: the HTTP and SQL checks below can't run" \
+    "kubectl -n $PROBE_NS describe pod $PROBE_HTTP  (image pull?)"
+fi
 
 info "1. Object storage (SeaweedFS)"
 buckets="$(kubectl -n data exec seaweedfs-0 -- sh -c 'echo s3.bucket.list | weed shell -master=localhost:9333 -filer=localhost:8888' 2>/dev/null || true)"
@@ -60,14 +81,14 @@ ok "bronze sink consumer lag: ${lag:-?} messages"
 
 info "4. Bronze"
 # Newest dt=/hr= folder and how many Parquet files it holds, via the filer's JSON listing.
-newest="$(kubectl -n observability run "probe-$RANDOM" --rm -i --quiet --restart=Never --image=curlimages/curl:8.11.1 --command -- sh -c '
+newest="$(probe_sh '
 B=http://seaweedfs.data.svc.cluster.local:8888/buckets/bronze/topics/cdc.app.users
 J="Accept: application/json"
 dt=$(curl -s -H "$J" "$B/?limit=10000" | grep -o "dt=[0-9-]*" | sort -u | tail -1)
 [ -z "$dt" ] && exit 0
 hr=$(curl -s -H "$J" "$B/$dt/?limit=10000" | grep -o "hr=[0-9]*" | sort -u | tail -1)
 n=$(curl -s -H "$J" "$B/$dt/$hr/?limit=10000" | grep -o "\.parquet\"" | wc -l)
-echo "$dt/$hr: $n files"' 2>/dev/null || true)"
+echo "$dt/$hr: $n files"')"
 if [ -n "$newest" ]; then ok "bronze newest folder $newest"; else fail "no bronze files yet" "guide › Bronze is not getting new files"; fi
 
 info "5. Silver catalog (Lakekeeper)"

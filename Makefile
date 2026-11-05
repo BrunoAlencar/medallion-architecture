@@ -31,7 +31,9 @@ help: ## Show this help
 .PHONY: prereqs
 prereqs: ## Check docker/kind/kubectl/helm (install with: brew install kind kubectl helm)
 	@for t in docker kind kubectl helm; do command -v $$t >/dev/null && echo "✔ $$t" || { echo "✘ $$t missing (brew install $$t; Docker Desktop/OrbStack/Colima for docker)"; exit 1; }; done
-	@docker info --format '{{.MemTotal}} {{.NCPU}}' | awk '{printf "✔ docker: %.1f GiB RAM, %s CPUs (want >= 16 GiB / 8)\n", $$1/1073741824, $$2}'
+	@info=$$(docker info --format '{{.MemTotal}} {{.NCPU}}' 2>/dev/null) || { echo "✘ docker daemon not reachable — start Docker Desktop/OrbStack/Colima (e.g. 'orb start')"; exit 1; }; \
+	echo "$$info" | awk '{ gib = $$1/1073741824; ok = (gib >= 15.5 && $$2 >= 8); \
+	  printf "%s docker: %.1f GiB RAM, %s CPUs (want >= 16 GiB / 8)\n", (ok ? "✔" : "⚠"), gib, $$2 }'
 
 .PHONY: cluster
 cluster: ## Create the kind cluster (1 control plane + 2 workers)
@@ -40,7 +42,7 @@ cluster: ## Create the kind cluster (1 control plane + 2 workers)
 	$(KUBECTL) apply -f infra/k8s/namespaces/namespaces.yaml
 
 .PHONY: images
-images: ## Build the 3 images and load them into kind
+images: ## Build the 3 images and load them into kind (cached; part of make up)
 	docker build -t medallion/kafka-connect:dev images/kafka-connect
 	docker build -t medallion/spark:dev -f images/spark/Dockerfile .
 	docker build -t medallion/seeder:dev -f images/seeder/Dockerfile .
@@ -69,11 +71,12 @@ helm-repos:
 
 ##@ Bring up
 .PHONY: up
-up: cluster secrets helm-repos storage observability core ## Everything: storage, LGTM, Kafka/CDC, StarRocks, Spark, seeder
+up: prereqs cluster images secrets helm-repos storage observability core ## Everything: images, storage, LGTM, Kafka/CDC, StarRocks, Spark, seeder
 	@echo; echo "Up. Next: make status · make run-pipeline · make ui"
 
 .PHONY: up-core
-up-core: cluster secrets helm-repos storage core ## Everything except the LGTM stack (lighter on memory)
+up-core: prereqs cluster images secrets helm-repos storage core ## Everything except the LGTM stack (lighter on memory)
+	@echo; echo "Up (no LGTM). Next: make status · make run-pipeline · make ui"
 
 .PHONY: storage
 storage: ## SeaweedFS + buckets, Postgres + Lakekeeper + warehouse
@@ -123,21 +126,23 @@ spark: ## Spark Operator, Pipeline config, the (suspended) schedule
 	$(KUBECTL) apply -f infra/k8s/spark/scheduled-pipeline.yaml
 
 .PHONY: observability
+# --wait: a chart that never gets Ready fails here, at its own step, not later in make status.
 observability: ## Mimir, Loki, Tempo, kube-state-metrics, Alloy, Grafana, dashboards, alert rules
 	$(MAKE) alerts
 	$(KUBECTL) apply -f infra/k8s/mimir/mimir.yaml
 	$(HELM) upgrade --install loki grafana-community/loki --version $(LOKI_CHART_VERSION) -n observability \
-	  -f infra/helm/loki-values.yaml \
+	  -f infra/helm/loki-values.yaml --wait --timeout $(WAIT) \
 	  --set loki.storage.s3.accessKeyId=$(S3_ACCESS_KEY) --set loki.storage.s3.secretAccessKey=$(S3_SECRET_KEY)
 	$(HELM) upgrade --install tempo grafana-community/tempo --version $(TEMPO_CHART_VERSION) -n observability \
-	  -f infra/helm/tempo-values.yaml \
+	  -f infra/helm/tempo-values.yaml --wait --timeout $(WAIT) \
 	  --set tempo.storage.trace.s3.access_key=$(S3_ACCESS_KEY) --set tempo.storage.trace.s3.secret_key=$(S3_SECRET_KEY)
 	$(HELM) upgrade --install kube-state-metrics prometheus-community/kube-state-metrics --version $(KSM_CHART_VERSION) \
-	  -n observability -f infra/helm/kube-state-metrics-values.yaml
-	$(HELM) upgrade --install alloy grafana/alloy --version $(ALLOY_CHART_VERSION) -n observability -f infra/helm/alloy-values.yaml
+	  -n observability -f infra/helm/kube-state-metrics-values.yaml --wait --timeout $(WAIT)
+	$(HELM) upgrade --install alloy grafana/alloy --version $(ALLOY_CHART_VERSION) -n observability \
+	  -f infra/helm/alloy-values.yaml --wait --timeout $(WAIT)
 	$(MAKE) dashboards
 	$(HELM) upgrade --install grafana grafana-community/grafana --version $(GRAFANA_CHART_VERSION) -n observability \
-	  -f infra/helm/grafana-values.yaml
+	  -f infra/helm/grafana-values.yaml --wait --timeout $(WAIT)
 	$(KUBECTL) -n observability rollout status sts/mimir --timeout=$(WAIT)
 
 .PHONY: dashboards

@@ -188,8 +188,8 @@ Turns MongoDB change streams into Change Events on `cdc.app.users` (`capture.mod
 - **Check:**
   ```bash
   kubectl -n kafka get kafkaconnector                                       # READY True
-  kubectl -n kafka exec medallion-dual-role-0 -c kafka -- curl -s \
-    medallion-connect-connect-api:8083/connectors/mongo-source/status       # or Kafka UI › Kafka Connect
+  kubectl -n kafka exec medallion-connect-connect-0 -- curl -s \
+    localhost:8083/connectors/mongo-source/status                           # or Kafka UI › Kafka Connect
   ```
 - **Healthy:** state RUNNING with 1 task, *Snapshot completed* = YES, *CDC lag* under a few seconds, *Change Events seen / s* ≈ the seeder's write rate.
 - **What a Change Event looks like** (`make consume`): `op` is `r` (snapshot), `c`, `u` or `d`; `after` is a **JSON string**; `source.ts_ms` is MongoDB's wall-clock time and `source.ord` the oplog increment. Together with the Kafka offset they make the Event Position.

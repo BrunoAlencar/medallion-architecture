@@ -118,8 +118,10 @@ spec:
             - |
               set -euo pipefail
               FE=starrocks-fe-service.data.svc.cluster.local
+              # Drop full-line `--` comments first: StarRocks rejects a statement that starts with one
+              # (ERROR 1064 ... Unexpected input '<EOF>'), and eval would run backticks inside them.
               render() { eval "cat <<__EOF__
-              $(cat "$1")
+              $(sed '/^[[:space:]]*--/d' "$1")
               __EOF__"; }
               sr() { mysql -h "$FE" -P 9030 -uroot "$@"; }
               until mysql -h "$FE" -P 9030 -uroot -p"$STARROCKS_ROOT_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1 \
