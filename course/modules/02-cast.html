@@ -15,7 +15,7 @@
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-5)">🍃</div><div><strong>MongoDB: the courtroom</strong><p>Where things actually happen. The app writes users here.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">👂</div><div><strong>Debezium: the stenographer</strong><p>Writes down every change MongoDB makes, in order, without interrupting.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-3)">📬</div><div><strong>Kafka: the wire service</strong><p>A durable queue that carries events from the people who write them to whoever reads them.</p></div></div>
-          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div><div><strong>Aiven S3 sink + SeaweedFS: the archive</strong><p>The sink files each batch of events into the bronze shelf of an S3-compatible store.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div><div><strong>Aiven S3 sink + RustFS: the archive</strong><p>The sink files each batch of events into the bronze shelf of an S3-compatible store.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-2)">✍️</div><div><strong>PySpark: the editor</strong><p>Turns the raw archive into a clean silver table, then writes the gold summaries.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">📰</div><div><strong>StarRocks: the newsstand</strong><p>A fast query engine where gold lives and where people (and AI tools) read results.</p></div></div>
         </div>
@@ -38,7 +38,7 @@
           <div class="arch-zone">
             <h4 class="arch-zone-label">Storage</h4>
             <div class="arch-component" data-desc="The Aiven S3 sink connector writes Kafka events as Parquet files into the bronze bucket. It needs no Schema Registry: each message carries its own schema."><div class="arch-icon">📦</div><span>Aiven S3 sink</span></div>
-            <div class="arch-component" data-desc="SeaweedFS stands in for Amazon S3 locally. Buckets: bronze, silver, gold, plus loki, tempo and mimir for monitoring data. MinIO was the first idea but its images are no longer published."><div class="arch-icon">🗄️</div><span>SeaweedFS</span></div>
+            <div class="arch-component" data-desc="RustFS stands in for Amazon S3 locally. Buckets: bronze, silver, gold, plus loki, tempo and mimir for monitoring data. MinIO was the first idea but its images are no longer published."><div class="arch-icon">🗄️</div><span>RustFS</span></div>
             <div class="arch-component" data-desc="Lakekeeper is an Iceberg REST catalog: the index card system that knows which files make up each Iceberg table. In AWS this role is played by the Glue Data Catalog."><div class="arch-icon">🗂️</div><span>Lakekeeper</span></div>
           </div>
           <div class="arch-zone">
@@ -109,7 +109,7 @@
 <span class="code-line">    <span class="code-property">value.converter.schemas.enable</span>: <span class="code-keyword">true</span></span>
 <span class="code-line">    <span class="code-property">format.output.type</span>: <span class="code-string">parquet</span></span>
 <span class="code-line">    <span class="code-property">format.output.fields</span>: <span class="code-string">key,value,offset,timestamp</span></span>
-<span class="code-line">    <span class="code-property">aws.s3.endpoint</span>: <span class="code-string">http://seaweedfs-s3.data:8333</span></span></code></pre>
+<span class="code-line">    <span class="code-property">aws.s3.endpoint</span>: <span class="code-string">http://rustfs.data:9000</span></span></code></pre>
           </div>
           <div class="translation-english">
             <span class="translation-label">PLAIN ENGLISH</span>

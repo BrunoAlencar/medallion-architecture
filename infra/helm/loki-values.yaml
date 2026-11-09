@@ -1,4 +1,4 @@
-# grafana-community/loki chart 21.0.0 (Loki 3.7.9), one monolithic replica on SeaweedFS.
+# grafana-community/loki chart 21.0.0 (Loki 3.7.9), one monolithic replica on RustFS.
 # S3 keys are passed with --set by the Makefile (from infra/dev.env).
 deploymentMode: Monolithic
 loki:
@@ -21,7 +21,7 @@ loki:
       ruler: loki
       admin: loki
     s3:
-      endpoint: http://seaweedfs-s3.data.svc.cluster.local:8333
+      endpoint: http://rustfs.data.svc.cluster.local:9000
       region: us-east-1
       s3ForcePathStyle: true
       insecure: true

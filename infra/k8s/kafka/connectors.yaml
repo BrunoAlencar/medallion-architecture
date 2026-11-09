@@ -47,7 +47,7 @@ spec:
     aws.access.key.id: ${env:S3_ACCESS_KEY}
     aws.secret.access.key: ${env:S3_SECRET_KEY}
     aws.s3.region: ${env:S3_REGION}
-    aws.s3.endpoint: http://seaweedfs-s3.data.svc.cluster.local:8333
+    aws.s3.endpoint: http://rustfs.data.svc.cluster.local:9000
     aws.s3.bucket.name: bronze
     format.output.type: parquet
     format.output.fields: key,value,offset,timestamp

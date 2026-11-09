@@ -112,8 +112,10 @@ spec:
 ---
 # Bootstraps Lakekeeper and creates the `medallion` warehouse on s3://silver/warehouse, or, if it
 # exists, re-applies its storage profile (so profile changes reach running clusters).
-# sts-enabled: Lakekeeper vends short-lived credentials from SeaweedFS STS (role LakekeeperVendedRole,
-# silver bucket only; see seaweedfs.yaml). The Lakekeeper UI needs them to list a table's files.
+# sts-enabled: Lakekeeper vends short-lived credentials from RustFS STS. It signs in as the IAM user
+# `lakekeeper` (silver bucket only, created by the rustfs-init Job), not as root, so the vended
+# credentials can't reach other buckets. RustFS accepts but ignores sts-role-arn (kept so the profile
+# has the same shape as on AWS). The Lakekeeper UI needs these credentials to list a table's files.
 # Idempotent: safe to re-run with `make up-core`.
 apiVersion: batch/v1
 kind: Job
@@ -145,7 +147,7 @@ spec:
                   "bucket": "silver",
                   "key-prefix": "warehouse",
                   "region": "${S3_REGION}",
-                  "endpoint": "http://seaweedfs-s3.data.svc.cluster.local:8333",
+                  "endpoint": "http://rustfs.data.svc.cluster.local:9000",
                   "path-style-access": true,
                   "flavor": "s3-compat",
                   "sts-enabled": true,
@@ -154,8 +156,8 @@ spec:
                 "storage-credential": {
                   "type": "s3",
                   "credential-type": "access-key",
-                  "aws-access-key-id": "${S3_ACCESS_KEY}",
-                  "aws-secret-access-key": "${S3_SECRET_KEY}"
+                  "aws-access-key-id": "${LAKEKEEPER_S3_ACCESS_KEY}",
+                  "aws-secret-access-key": "${LAKEKEEPER_S3_SECRET_KEY}"
                 }
               EOF
               # The list answers {"warehouses":[{"id":"…","warehouse-id":"…","name":"medallion",…}]}

@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Medallion production - data lake. Replaces SeaweedFS and Lakekeeper: one KMS key, S3 buckets for
+  Medallion production - data lake. Replaces RustFS and Lakekeeper: one KMS key, S3 buckets for
   bronze (append-only Parquet from the Aiven sink), silver (Iceberg), gold (StarRocks shared-data),
   Loki and Tempo, and the Glue database that is silver's Iceberg
   catalog (ADR-0003). Buckets, key and database are retained if the stack is deleted.

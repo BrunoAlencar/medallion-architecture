@@ -64,7 +64,7 @@
     },
     {
       "type": "row",
-      "title": "Components (up = the component answered its last metrics scrape)",
+      "title": "Components (up = the component answered its last metrics scrape; RustFS = pod ready)",
       "collapsed": false,
       "id": 2,
       "gridPos": {
@@ -461,8 +461,8 @@
     },
     {
       "type": "stat",
-      "title": "SeaweedFS (S3)",
-      "description": "Object storage for bronze/silver/gold and the LGTM stack. DOWN or NO DATA \u2192 `docs/how-to/operate-and-debug.md` \u203a Component checklist \u203a SeaweedFS (S3).",
+      "title": "RustFS (S3)",
+      "description": "Object storage for bronze/silver/gold and the LGTM stack. UP = pod ready (RustFS pushes metrics, so there is no scrape). DOWN or NO DATA \u2192 `docs/how-to/operate-and-debug.md` \u203a Component checklist \u203a RustFS (S3).",
       "targets": [
         {
           "refId": "A",
@@ -470,7 +470,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "max(up{component=\"seaweedfs\"})",
+          "expr": "max(kube_statefulset_status_replicas_ready{namespace=\"data\", statefulset=\"rustfs\"})",
           "legendFormat": "__auto",
           "range": false,
           "instant": true,

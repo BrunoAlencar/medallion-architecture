@@ -45,10 +45,18 @@ if [ "$PROBES_READY" = 0 ]; then
     "kubectl -n $PROBE_NS describe pod $PROBE_HTTP  (image pull?)"
 fi
 
-info "1. Object storage (SeaweedFS)"
-buckets="$(kubectl -n data exec seaweedfs-0 -- sh -c 'echo s3.bucket.list | weed shell -master=localhost:9333 -filer=localhost:8888' 2>/dev/null || true)"
+# S3 calls from the curl probe, SigV4-signed with the root keys from infra/dev.env (RustFS has no
+# anonymous listing). s3_sh <script> runs a sh script that can call: s3 <path?query>
+S3_EP=http://rustfs.data.svc.cluster.local:9000
+s3_sh() {
+  probe_sh "s3() { curl -s -m 10 --aws-sigv4 'aws:amz:${S3_REGION}:s3' --user '${S3_ACCESS_KEY}:${S3_SECRET_KEY}' \"${S3_EP}/\$1\"; }
+$1"
+}
+
+info "1. Object storage (RustFS)"
+buckets="$(s3_sh 's3 ""')"
 for b in bronze silver gold loki tempo mimir; do
-  if grep -q "$b" <<<"$buckets"; then ok "bucket $b"; else fail "bucket $b missing" "$G SeaweedFS (rerun: kubectl -n data delete job seaweedfs-buckets; make up-core)"; fi
+  if grep -q "<Name>$b</Name>" <<<"$buckets"; then ok "bucket $b"; else fail "bucket $b missing" "$G RustFS (rerun: make storage)"; fi
 done
 
 info "2. Source (MongoDB)"
@@ -80,14 +88,15 @@ lag="$(kubectl -n kafka exec medallion-dual-role-0 -c kafka -- bin/kafka-consume
 ok "bronze sink consumer lag: ${lag:-?} messages"
 
 info "4. Bronze"
-# Newest dt=/hr= folder and how many Parquet files it holds, via the filer's JSON listing.
-newest="$(probe_sh '
-B=http://seaweedfs.data.svc.cluster.local:8888/buckets/bronze/topics/cdc.app.users
-J="Accept: application/json"
-dt=$(curl -s -H "$J" "$B/?limit=10000" | grep -o "dt=[0-9-]*" | sort -u | tail -1)
+# Newest dt=/hr= folder and how many Parquet files it holds, via S3 ListObjectsV2 with delimiter "/"
+# ("/" and "=" percent-encoded so the SigV4 canonical query matches what RustFS checks).
+newest="$(s3_sh '
+ls3() { s3 "bronze?list-type=2&delimiter=%2F&prefix=$(printf %s "$1" | sed "s|/|%2F|g; s|=|%3D|g")"; }
+P=topics/cdc.app.users/
+dt=$(ls3 "$P" | grep -o "dt=[0-9-]*" | sort -u | tail -1)
 [ -z "$dt" ] && exit 0
-hr=$(curl -s -H "$J" "$B/$dt/?limit=10000" | grep -o "hr=[0-9]*" | sort -u | tail -1)
-n=$(curl -s -H "$J" "$B/$dt/$hr/?limit=10000" | grep -o "\.parquet\"" | wc -l)
+hr=$(ls3 "$P$dt/" | grep -o "hr=[0-9]*" | sort -u | tail -1)
+n=$(ls3 "$P$dt/$hr/" | grep -o "\.parquet</Key>" | wc -l | tr -d " ")
 echo "$dt/$hr: $n files"')"
 if [ -n "$newest" ]; then ok "bronze newest folder $newest"; else fail "no bronze files yet" "guide › Bronze is not getting new files"; fi
 

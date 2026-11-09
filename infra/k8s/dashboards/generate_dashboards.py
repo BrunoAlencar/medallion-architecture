@@ -246,12 +246,17 @@ class Board:
 # ---------------------------------------------------------------------------------------------
 # 1. Platform health (home)
 # ---------------------------------------------------------------------------------------------
+# (component, title, description[, PromQL]). The default PromQL is the component's scrape `up`.
+# RustFS pushes its metrics over OTLP instead of being scraped, so it has no `up`: its tile reads
+# StatefulSet readiness from kube-state-metrics (readiness probe = RustFS /health/ready).
+RUSTFS_READY = 'max(kube_statefulset_status_replicas_ready{namespace="data", statefulset="rustfs"})'
 COMPONENTS = [
     ("mongodb", "MongoDB", "Source database (exporter sidecar)."),
     ("kafka", "Kafka broker", "Strimzi KRaft broker/controller."),
     ("kafka-exporter", "Kafka Exporter", "Topic offsets and consumer-group lag."),
     ("kafka-connect", "Kafka Connect", "Runs mongo-source (Debezium) and bronze-s3-sink (Aiven)."),
-    ("seaweedfs", "SeaweedFS (S3)", "Object storage for bronze/silver/gold and the LGTM stack."),
+    ("rustfs", "RustFS (S3)", "Object storage for bronze/silver/gold and the LGTM stack. UP = pod ready "
+     "(RustFS pushes metrics, so there is no scrape).", RUSTFS_READY),
     ("lakekeeper", "Lakekeeper", "Iceberg REST catalog for silver."),
     ("starrocks-fe", "StarRocks FE", "Gold SQL frontend (MySQL :9030)."),
     ("starrocks-cn", "StarRocks CN", "Gold compute node."),
@@ -273,9 +278,10 @@ The row *Data flow* reads left to right like the pipeline: the first red tile is
 Drill down with the dashboards menu (top right): *Pipeline*, *CDC & Kafka*, *Source*, *Storage & query*, *Gold Metrics*, *Kubernetes*.
 """), 24, 4)
 
-    b.row("Components (up = the component answered its last metrics scrape)")
-    for comp, name, desc in COMPONENTS:
-        b.add(stat(name, [prom(f'max(up{{component="{comp}"}})', instant=True)],
+    b.row("Components (up = the component answered its last metrics scrape; RustFS = pod ready)")
+    for comp, name, desc, *expr in COMPONENTS:
+        query = expr[0] if expr else f'max(up{{component="{comp}"}})'
+        b.add(stat(name, [prom(query, instant=True)],
                    f"{desc} DOWN or NO DATA → `{GUIDE}` › Component checklist › {name}.",
                    mappings=UP_MAPPINGS, thresholds=steps(("red", None), ("green", 1))), 4, 3)
 
@@ -567,19 +573,22 @@ def source() -> Board:
 
 
 # ---------------------------------------------------------------------------------------------
-# 5. Storage and query (SeaweedFS, Lakekeeper, StarRocks)
+# 5. Storage and query (RustFS, Lakekeeper, StarRocks)
 # ---------------------------------------------------------------------------------------------
 def storage_query() -> Board:
     b = Board("medallion-storage-query", "Medallion · Storage & query",
-              "SeaweedFS (S3), the Lakekeeper Iceberg catalog and StarRocks (gold).", time_from="now-3h", tags=["storage"])
-    b.row("SeaweedFS (S3 API)")
-    b.add(timeseries("S3 requests / s by bucket",
-                     [prom('sum by (bucket) (rate({__name__=~"(?i)seaweedfs_s3_request_total", component="seaweedfs"}[5m]))', "{{bucket}}")],
-                     "bronze = sink writes + Pipeline reads; silver = Iceberg; gold = StarRocks; loki/tempo/mimir = observability.",
-                     unit="reqps", stack=True), 12, 8)
-    b.add(timeseries("S3 requests / s by type",
-                     [prom('sum by (type) (rate({__name__=~"(?i)seaweedfs_s3_request_total", component="seaweedfs"}[5m]))', "{{type}}")],
-                     "PUT/GET/LIST/DELETE... 4xx/5xx spikes show up in the logs panel below.", unit="reqps", stack=True), 12, 8)
+              "RustFS (S3), the Lakekeeper Iceberg catalog and StarRocks (gold).", time_from="now-3h", tags=["storage"])
+    # RustFS pushes these over OTLP (Alloy -> Mimir, job="rustfs"); names as in RustFS 1.0.4.
+    b.row("RustFS (S3 API)")
+    b.add(timeseries("S3 requests / s by API",
+                     [prom('sum by (name) (rate(rustfs_api_requests_total[5m]))', "{{name}}")],
+                     "PutObject = sink flushes, Iceberg commits, StarRocks loads, LGTM flushes; GetObject/ListObjectsV2 = "
+                     "Pipeline and query reads. RustFS 1.0.4 does not split requests by bucket. "
+                     "4xx/5xx show up in the logs panel below.", unit="reqps", stack=True), 12, 8)
+    b.add(timeseries("Stored bytes by bucket",
+                     [prom('max by (bucket) (rustfs_bucket_usage_usage_bytes)', "{{bucket}}")],
+                     "From RustFS's background usage scanner, so it lags writes by minutes. bronze only grows (append-only); "
+                     "silver grows with each MERGE until snapshots expire; gold is rebuilt per run.", unit="bytes"), 12, 8)
     b.row("Lakekeeper (Iceberg REST catalog)")
     b.add(stat("Lakekeeper up", [prom('max(up{component="lakekeeper"})', instant=True)], "Catalog metrics endpoint :9000.",
                mappings=UP_MAPPINGS, thresholds=steps(("red", None), ("green", 1))), 4, 6)
@@ -607,7 +616,7 @@ def storage_query() -> Board:
         "FE -Xmx 1 GB, CN mem_limit 1.8 GB.", unit="bytes"), 12, 8)
     b.row("Logs")
     b.add(logs("Storage warnings and errors",
-               '{namespace="data", component=~"seaweedfs|lakekeeper|starrocks-fe|starrocks-cn"} |~ "(?i)warn|error"',
+               '{namespace="data", component=~"rustfs|lakekeeper|starrocks-fe|starrocks-cn"} |~ "(?i)warn|error"',
                "Access denied / signature errors here usually mean wrong S3 keys or a missing bucket."), 24, 10)
     return b
 

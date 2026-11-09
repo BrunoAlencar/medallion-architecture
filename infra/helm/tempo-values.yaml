@@ -1,4 +1,4 @@
-# grafana-community/tempo chart 3.2.1 (Tempo 3.1.1), single binary on SeaweedFS.
+# grafana-community/tempo chart 3.2.1 (Tempo 3.1.1), single binary on RustFS.
 # Metrics generator writes service-graph and span metrics to Mimir (Tempo "Service graph" view).
 # S3 keys are passed with --set by the Makefile.
 tempo:
@@ -10,7 +10,7 @@ tempo:
       backend: s3
       s3:
         bucket: tempo
-        endpoint: seaweedfs-s3.data.svc.cluster.local:8333
+        endpoint: rustfs.data.svc.cluster.local:9000
         region: us-east-1
         insecure: true
         forcepathstyle: true

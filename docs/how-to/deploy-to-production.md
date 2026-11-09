@@ -4,7 +4,7 @@ How to take the kind POC to an AWS account. The **AWS layer** (network, S3, Glue
 
 Domain words are defined in [GLOSSARY.md](../../GLOSSARY.md); day-to-day checks and runbooks are in [operate-and-debug.md](operate-and-debug.md).
 
-> **Status.** The templates pass `cfn-lint` but have **not been deployed yet**. Part 2 lists the code and config changes the repo needs first (it is wired for SeaweedFS, Lakekeeper and kind today). [Part 7](#7-verify-in-staging-first) lists the settings to confirm in a staging deploy before production.
+> **Status.** The templates pass `cfn-lint` but have **not been deployed yet**. Part 2 lists the code and config changes the repo needs first (it is wired for RustFS, Lakekeeper and kind today). [Part 7](#7-verify-in-staging-first) lists the settings to confirm in a staging deploy before production.
 
 ---
 
@@ -34,7 +34,7 @@ App's MongoDB (Atlas / self-managed) ──private link / peering──► VPC, 
 | Locally (kind) | Production | Defined in |
 |---|---|---|
 | kind, 2 workers labelled `medallion.io/node-group` | EKS 1.37, managed node groups `platform`, `streaming`, `analytics` (same label) | `04-eks.yaml` |
-| SeaweedFS buckets | S3 buckets bronze, silver, gold, loki, tempo (SSE-KMS, TLS-only, versioned data buckets) | `02-data-lake.yaml` |
+| RustFS buckets | S3 buckets bronze, silver, gold, loki, tempo (SSE-KMS, TLS-only, versioned data buckets) | `02-data-lake.yaml` |
 | Lakekeeper + Postgres | Glue Data Catalog database `silver` (ADR-0003) | `02-data-lake.yaml` |
 | `kind load` of `:dev` images | ECR, immutable tags (git SHA) | `03-ecr.yaml` |
 | Strimzi Kafka (1 broker, RF 1) | Amazon MSK, Kafka 4.1.x KRaft, 3 brokers, RF 3 / min ISR 2, IAM auth only | `05-msk.yaml` |
@@ -59,7 +59,7 @@ Why these choices:
 
 ## 2. Before the first deploy: code and config changes
 
-The repo is wired for SeaweedFS (path-style HTTP, static keys), Lakekeeper (REST catalog) and kind. These changes are **required**; none of them is in the repo yet.
+The repo is wired for RustFS (path-style HTTP, static keys), Lakekeeper (REST catalog) and kind. These changes are **required**; none of them is in the repo yet.
 
 | # | Change | Where | Why |
 |---|---|---|---|
@@ -505,7 +505,7 @@ The first run creates the silver tables in Glue, fills gold and writes a row to 
 
 ### Step 12 — Verify
 
-The production version of the README walkthrough. `make status` is kind-only (it execs into in-cluster Kafka and SeaweedFS).
+The production version of the README walkthrough. `make status` is kind-only (it execs into in-cluster Kafka and lists RustFS from an in-cluster probe pod).
 
 | Check | How | Expect |
 |---|---|---|

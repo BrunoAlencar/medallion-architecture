@@ -11,7 +11,7 @@ def _env(name: str, default: str = "") -> str:
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    s3_endpoint: str = "http://seaweedfs-s3.data.svc.cluster.local:8333"
+    s3_endpoint: str = "http://rustfs.data.svc.cluster.local:9000"
     s3_access_key: str = ""
     s3_secret_key: str = ""
     s3_region: str = "us-east-1"

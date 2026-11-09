@@ -1,7 +1,7 @@
 {
   "uid": "medallion-storage-query",
   "title": "Medallion \u00b7 Storage & query",
-  "description": "SeaweedFS (S3), the Lakekeeper Iceberg catalog and StarRocks (gold).",
+  "description": "RustFS (S3), the Lakekeeper Iceberg catalog and StarRocks (gold).",
   "tags": [
     "medallion",
     "storage"
@@ -50,7 +50,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "SeaweedFS (S3 API)",
+      "title": "RustFS (S3 API)",
       "collapsed": false,
       "id": 1,
       "gridPos": {
@@ -63,8 +63,8 @@
     },
     {
       "type": "timeseries",
-      "title": "S3 requests / s by bucket",
-      "description": "bronze = sink writes + Pipeline reads; silver = Iceberg; gold = StarRocks; loki/tempo/mimir = observability.",
+      "title": "S3 requests / s by API",
+      "description": "PutObject = sink flushes, Iceberg commits, StarRocks loads, LGTM flushes; GetObject/ListObjectsV2 = Pipeline and query reads. RustFS 1.0.4 does not split requests by bucket. 4xx/5xx show up in the logs panel below.",
       "targets": [
         {
           "refId": "A",
@@ -72,8 +72,8 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (bucket) (rate({__name__=~\"(?i)seaweedfs_s3_request_total\", component=\"seaweedfs\"}[5m]))",
-          "legendFormat": "{{bucket}}",
+          "expr": "sum by (name) (rate(rustfs_api_requests_total[5m]))",
+          "legendFormat": "{{name}}",
           "range": true,
           "instant": false,
           "editorMode": "code"
@@ -132,8 +132,8 @@
     },
     {
       "type": "timeseries",
-      "title": "S3 requests / s by type",
-      "description": "PUT/GET/LIST/DELETE... 4xx/5xx spikes show up in the logs panel below.",
+      "title": "Stored bytes by bucket",
+      "description": "From RustFS's background usage scanner, so it lags writes by minutes. bronze only grows (append-only); silver grows with each MERGE until snapshots expire; gold is rebuilt per run.",
       "targets": [
         {
           "refId": "A",
@@ -141,8 +141,8 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (type) (rate({__name__=~\"(?i)seaweedfs_s3_request_total\", component=\"seaweedfs\"}[5m]))",
-          "legendFormat": "{{type}}",
+          "expr": "max by (bucket) (rustfs_bucket_usage_usage_bytes)",
+          "legendFormat": "{{bucket}}",
           "range": true,
           "instant": false,
           "editorMode": "code"
@@ -154,16 +154,16 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "bytes",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 60,
+            "fillOpacity": 15,
             "showPoints": "never",
             "pointSize": 6,
             "spanNulls": true,
             "stacking": {
-              "mode": "normal",
+              "mode": "none",
               "group": "A"
             },
             "thresholdsStyle": {
@@ -1019,7 +1019,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{namespace=\"data\", component=~\"seaweedfs|lakekeeper|starrocks-fe|starrocks-cn\"} |~ \"(?i)warn|error\"",
+          "expr": "{namespace=\"data\", component=~\"rustfs|lakekeeper|starrocks-fe|starrocks-cn\"} |~ \"(?i)warn|error\"",
           "queryType": "range",
           "editorMode": "code"
         }

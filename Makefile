@@ -79,11 +79,11 @@ up-core: prereqs cluster images secrets helm-repos storage core ## Everything ex
 	@echo; echo "Up (no LGTM). Next: make status · make run-pipeline · make ui"
 
 .PHONY: storage
-storage: ## SeaweedFS + buckets, Postgres + Lakekeeper + warehouse
-	$(KUBECTL) -n data delete job seaweedfs-buckets --ignore-not-found
-	$(KUBECTL) apply -f infra/k8s/seaweedfs/seaweedfs.yaml
-	$(KUBECTL) -n data rollout status sts/seaweedfs --timeout=$(WAIT)
-	$(KUBECTL) -n data wait --for=condition=complete job/seaweedfs-buckets --timeout=$(WAIT)
+storage: ## RustFS + buckets + Lakekeeper IAM user, Postgres + Lakekeeper + warehouse
+	$(KUBECTL) -n data delete job rustfs-init --ignore-not-found
+	$(KUBECTL) apply -f infra/k8s/rustfs/rustfs.yaml
+	$(KUBECTL) -n data rollout status sts/rustfs --timeout=$(WAIT)
+	$(KUBECTL) -n data wait --for=condition=complete job/rustfs-init --timeout=$(WAIT)
 	$(KUBECTL) -n data delete job lakekeeper-warehouse --ignore-not-found
 	$(KUBECTL) apply -f infra/k8s/lakekeeper/lakekeeper.yaml
 	$(KUBECTL) -n data wait --for=condition=complete job/lakekeeper-warehouse --timeout=$(WAIT)
@@ -209,7 +209,7 @@ status: ## Check every component in data-flow order (read-only)
 	scripts/status.sh
 
 .PHONY: ui
-ui: ## Port-forward Grafana, Kafka UI, Lakekeeper, StarRocks, SeaweedFS, Connect REST
+ui: ## Port-forward Grafana, Kafka UI, Lakekeeper, StarRocks, RustFS, Connect REST
 	scripts/ui.sh
 
 .PHONY: logs-pipeline
