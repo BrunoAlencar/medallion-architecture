@@ -206,6 +206,12 @@ alloy:
       // Pipeline log lines carry level=, step= and trace_id=; promote level to a label and keep
       // trace_id as structured metadata so Grafana can jump from a log line to its trace.
       loki.process "pods" {
+        // Tempo's idle backend worker asks its scheduler for compaction work every few seconds and
+        // logs "no jobs found" at level=error (and the scheduler a warn). Pure noise: drop it here.
+        stage.drop {
+          expression          = "code = NotFound desc = no jobs found"
+          drop_counter_reason = "tempo_idle_backend_scheduler"
+        }
         stage.regex {
           expression = "(?P<level>INFO|WARN|WARNING|ERROR|DEBUG)\\s+run_id=(?P<run>\\S+)\\s+step=(?P<step>\\S+)\\s+trace_id=(?P<trace_id>[0-9a-f-]+)"
         }

@@ -60,6 +60,8 @@ data:
     GRANT ALL ON ALL TABLES IN DATABASE gold TO USER 'pipeline'@'%';
     GRANT ALL ON DATABASE ops TO USER 'pipeline'@'%';
     GRANT ALL ON ALL TABLES IN DATABASE ops TO USER 'pipeline'@'%';
+    -- Shared-data: CREATE TABLE (the Pipeline's gold `*__staging ... LIKE`) needs the volume too.
+    GRANT USAGE ON STORAGE VOLUME gold_volume TO USER 'pipeline'@'%';
 
     -- For mcp-server-starrocks (no read-only mode exists there, so this grant is the only guard).
     CREATE USER IF NOT EXISTS 'mcp_reader'@'%' IDENTIFIED BY '${STARROCKS_MCP_READER_PASSWORD}';

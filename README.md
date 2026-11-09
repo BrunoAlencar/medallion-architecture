@@ -4,6 +4,7 @@
 
 - Plan and settled behaviour: [PLAN.md](PLAN.md) · domain words: [GLOSSARY.md](GLOSSARY.md) · decisions: [docs/adr/](docs/adr/)
 - **Checking and debugging each component: [docs/how-to/operate-and-debug.md](docs/how-to/operate-and-debug.md)**
+- Going to production on AWS (CloudFormation in [infra/cloudformation/](infra/cloudformation/)): [docs/how-to/deploy-to-production.md](docs/how-to/deploy-to-production.md)
 
 ```
 MongoDB 8 (rs0) ──change streams──► Debezium MongoDB source ──► Kafka 4.3 topic cdc.app.users (3 partitions, key=_id)
@@ -57,7 +58,7 @@ make ui               # Grafana http://localhost:3000 (admin/admin), Kafka UI :8
 | 10 | `make mcp-env`, then connect as `mcp_reader` | `SELECT` on `gold` works; writes and other databases are denied |
 | 11 | `make down` | the cluster is gone |
 
-`make schedule-on` runs the Pipeline every 10 minutes (a ScheduledSparkApplication).
+The Pipeline also runs **every minute** on its own (a ScheduledSparkApplication, `infra/k8s/spark/scheduled-pipeline.yaml`), so gold grows while the seeder writes. `make schedule-off` pauses it, `make schedule-on` resumes it (`EVERY=10m` for another interval).
 
 ## Repository layout
 

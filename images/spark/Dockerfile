@@ -26,6 +26,16 @@ RUN set -eux; \
     curl -fsSLO "${MAVEN}/com/mysql/mysql-connector-j/${MYSQL_JDBC_VERSION}/mysql-connector-j-${MYSQL_JDBC_VERSION}.jar"; \
     ls -la /opt/spark/jars | grep -E 'iceberg|hadoop-aws|bundle-|starrocks|mysql'
 
+# Iceberg 1.12's default S3FileIO HTTP client ("apache") is the SDK's Apache5HttpClient, which the
+# SDK version Hadoop pins doesn't have, and the SDK bundle ships no URLConnection client either.
+# Add the URLConnection client of the *same* SDK version; apps/pipeline/common.py selects it
+# (http-client.type=urlconnection). s3a keeps using the bundle's Apache client.
+RUN set -eux; \
+    cd /opt/spark/jars; \
+    AWS_SDK_VERSION="$(ls bundle-*.jar | sed -E 's/bundle-(.*)\.jar/\1/')"; \
+    curl -fsSLO "${MAVEN}/software/amazon/awssdk/url-connection-client/${AWS_SDK_VERSION}/url-connection-client-${AWS_SDK_VERSION}.jar"; \
+    ls -la url-connection-client-*.jar
+
 COPY apps/pipeline/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt \
     || python3 -m pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt

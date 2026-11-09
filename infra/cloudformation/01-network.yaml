@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - network. VPC across 3 AZs: public subnets (NAT, internet-facing load
+  balancers) and private subnets (EKS nodes, MSK brokers), one NAT gateway per AZ, and an S3
+  gateway endpoint so bronze/silver/gold traffic skips the NAT.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+    Description: Environment name; prefixes every resource and export.
+  VpcCidr:
+    Type: String
+    Default: 10.40.0.0/16
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/16$"
+    Description: A /16. It is split into eight /19 blocks; six are used.
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion"}
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion"}
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ---- public subnets (one per AZ) -------------------------------------------------------------
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-public-1"}
+        - {Key: kubernetes.io/role/elb, Value: "1"}
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-public-2"}
+        - {Key: kubernetes.io/role/elb, Value: "1"}
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-public-3"}
+        - {Key: kubernetes.io/role/elb, Value: "1"}
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-public"}
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnet1Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref PublicRouteTable, SubnetId: !Ref PublicSubnet1}
+  PublicSubnet2Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref PublicRouteTable, SubnetId: !Ref PublicSubnet2}
+  PublicSubnet3Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref PublicRouteTable, SubnetId: !Ref PublicSubnet3}
+
+  # ---- NAT gateway per AZ, so losing one AZ doesn't cut the others off ---------------------------
+  NatEip1:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties: {Domain: vpc}
+  NatEip2:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties: {Domain: vpc}
+  NatEip3:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties: {Domain: vpc}
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatEip1.AllocationId, SubnetId: !Ref PublicSubnet1}
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatEip2.AllocationId, SubnetId: !Ref PublicSubnet2}
+  NatGateway3:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatEip3.AllocationId, SubnetId: !Ref PublicSubnet3}
+
+  # ---- private subnets (EKS nodes and pods, MSK brokers) -----------------------------------------
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-private-1"}
+        - {Key: kubernetes.io/role/internal-elb, Value: "1"}
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [4, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-private-2"}
+        - {Key: kubernetes.io/role/internal-elb, Value: "1"}
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Select [5, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-private-3"}
+        - {Key: kubernetes.io/role/internal-elb, Value: "1"}
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-private-1"}
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-private-2"}
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-private-3"}
+  PrivateDefaultRoute1:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref PrivateRouteTable1, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref NatGateway1}
+  PrivateDefaultRoute2:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref PrivateRouteTable2, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref NatGateway2}
+  PrivateDefaultRoute3:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref PrivateRouteTable3, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref NatGateway3}
+  PrivateSubnet1Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref PrivateRouteTable1, SubnetId: !Ref PrivateSubnet1}
+  PrivateSubnet2Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref PrivateRouteTable2, SubnetId: !Ref PrivateSubnet2}
+  PrivateSubnet3Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref PrivateRouteTable3, SubnetId: !Ref PrivateSubnet3}
+
+  # S3 traffic (Kafka Connect -> bronze, Spark, StarRocks, Loki/Tempo) stays off the NAT gateways.
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds: [!Ref PrivateRouteTable1, !Ref PrivateRouteTable2, !Ref PrivateRouteTable3]
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: {Name: !Sub "${EnvName}-medallion-VpcId"}
+  VpcCidr:
+    Value: !Ref VpcCidr
+    Export: {Name: !Sub "${EnvName}-medallion-VpcCidr"}
+  PrivateSubnetIds:
+    Description: Comma-separated, one per AZ.
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+    Export: {Name: !Sub "${EnvName}-medallion-PrivateSubnetIds"}
+  PublicSubnetIds:
+    Description: Comma-separated, one per AZ.
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+    Export: {Name: !Sub "${EnvName}-medallion-PublicSubnetIds"}

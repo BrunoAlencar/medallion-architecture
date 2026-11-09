@@ -693,7 +693,9 @@ def kubernetes() -> Board:
     b.add(timeseries("OOM kills", [prom('sum by (pod) (increase(container_oom_events_total{namespace=~"$namespace"}[10m]))', "{{pod}}")],
                      "", draw="bars"), 12, 9)
     b.add(logs("Kubernetes events-like errors (all namespaces)",
-               '{namespace=~"$namespace"} |~ "(?i)(OutOfMemory|OOMKilled|BackOff|Exception in thread)"',
+               # container!="loki": Loki logs every query it runs, including this one, so its own
+               # query log would match the search terms.
+               '{namespace=~"$namespace", container!="loki"} |~ "(?i)(OutOfMemory|OOMKilled|BackOff|Exception in thread)"',
                "Quick scan for crash signatures."), 24, 9)
     return b
 

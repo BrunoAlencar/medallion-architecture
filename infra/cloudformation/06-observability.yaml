@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - observability. Replaces Mimir with Amazon Managed Service for Prometheus
+  (AMP): Alloy remote-writes to it with SigV4, Grafana queries it, its ruler evaluates
+  infra/k8s/alerts/medallion-alerts.yaml (loaded by deploy.sh), and its Alertmanager notifies an
+  SNS topic. Loki, Tempo, Grafana and Alloy stay self-hosted on EKS, so the dashboards don't change.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional e-mail subscribed to the alerts topic (confirm the subscription e-mail).
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Resources:
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${EnvName}-medallion-alerts"
+
+  AlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlertsTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAmpAlertmanager
+            Effect: Allow
+            Principal: {Service: aps.amazonaws.com}
+            Action: ["sns:Publish", "sns:GetTopicAttributes"]
+            Resource: !Ref AlertsTopic
+            Condition:
+              StringEquals: {"aws:SourceAccount": !Ref AWS::AccountId}
+
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  AmpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/prometheus/${EnvName}-medallion"
+      RetentionInDays: 30
+
+  Workspace:
+    Type: AWS::APS::Workspace
+    Properties:
+      Alias: !Sub "${EnvName}-medallion"
+      LoggingConfiguration:
+        LogGroupArn: !GetAtt AmpLogGroup.Arn
+      # Every alert in medallion-alerts.yaml carries a `severity` label and a `runbook` annotation
+      # pointing at docs/how-to/operate-and-debug.md; both end up in the SNS message.
+      AlertManagerDefinition: !Sub |
+        alertmanager_config: |
+          route:
+            receiver: sns
+            group_by: [alertname, component]
+            group_wait: 30s
+            group_interval: 5m
+            repeat_interval: 4h
+          receivers:
+            - name: sns
+              sns_configs:
+                - topic_arn: ${AlertsTopic}
+                  sigv4:
+                    region: ${AWS::Region}
+                  subject: '[${EnvName}] {{ .CommonLabels.alertname }} ({{ .Status }})'
+                  message: |
+                    {{ range .Alerts }}{{ .Annotations.summary }}
+                    runbook: {{ .Annotations.runbook }}
+                    {{ end }}
+
+Outputs:
+  AmpWorkspaceId:
+    Value: !GetAtt Workspace.WorkspaceId
+    Export: {Name: !Sub "${EnvName}-medallion-AmpWorkspaceId"}
+  AmpWorkspaceArn:
+    Value: !GetAtt Workspace.Arn
+    Export: {Name: !Sub "${EnvName}-medallion-AmpWorkspaceArn"}
+  AmpPrometheusEndpoint:
+    Description: Grafana data source URL; Alloy remote-writes to <this>api/v1/remote_write
+    Value: !GetAtt Workspace.PrometheusEndpoint
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic

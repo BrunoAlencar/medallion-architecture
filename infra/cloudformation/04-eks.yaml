@@ -1,0 +1,230 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - EKS. Replaces kind. Three managed node groups carry the same
+  medallion.io/node-group labels as the kind workers (platform, streaming, analytics), plus the
+  add-ons the workloads need (VPC CNI, CoreDNS, kube-proxy, EBS CSI for StarRocks/Loki volumes)
+  and the IAM OIDC provider that IRSA roles (06-workload-iam.yaml) trust.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+  KubernetesVersion:
+    Type: String
+    Default: "1.37"
+    Description: Same minor as the kind node image (kindest/node:v1.37.0).
+  AdminPrincipalArn:
+    Type: String
+    Default: ""
+    Description: >-
+      IAM role/user ARN given cluster-admin through an EKS access entry (e.g. your SSO admin role
+      or the CI deploy role). The identity that creates the stack is admin too.
+  ApiPublicAccessCidr:
+    Type: String
+    Default: ""
+    Description: >-
+      CIDR allowed to reach the Kubernetes API from the internet (e.g. your office/VPN egress
+      /32). Empty = private endpoint only (reach it from inside the VPC: VPN, bastion, CI runner).
+  PlatformInstanceType:
+    Type: String
+    Default: m7i.xlarge
+    Description: Operators, Kafka UI, Loki, Tempo, Grafana, Alloy, External Secrets.
+  StreamingInstanceType:
+    Type: String
+    Default: m7i.large
+    Description: Kafka Connect workers (Debezium source + Aiven S3 sink).
+  AnalyticsInstanceType:
+    Type: String
+    Default: r7i.2xlarge
+    Description: StarRocks FE/CN and the Spark driver/executors.
+  AnalyticsMaxNodes:
+    Type: Number
+    Default: 8
+    MinValue: 3
+
+Conditions:
+  HasAdminPrincipal: !Not [!Equals [!Ref AdminPrincipalArn, ""]]
+  HasPublicApi: !Not [!Equals [!Ref ApiPublicAccessCidr, ""]]
+
+Resources:
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-eks-cluster"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: eks.amazonaws.com}
+            Action: ["sts:AssumeRole", "sts:TagSession"]
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonEKSClusterPolicy"
+      Policies:
+        - PolicyName: secrets-envelope-encryption
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey", "kms:CreateGrant"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+
+  Cluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Sub "${EnvName}-medallion"
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt ClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds: !Split [",", {"Fn::ImportValue": !Sub "${EnvName}-medallion-PrivateSubnetIds"}]
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: !If [HasPublicApi, true, false]
+        PublicAccessCidrs: !If [HasPublicApi, [!Ref ApiPublicAccessCidr], !Ref AWS::NoValue]
+      AccessConfig:
+        AuthenticationMode: API
+        BootstrapClusterCreatorAdminPermissions: true
+      EncryptionConfig:
+        - Provider: {KeyArn: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}}
+          Resources: [secrets]
+      Logging:
+        ClusterLogging:
+          EnabledTypes: [{Type: api}, {Type: audit}, {Type: authenticator}]
+      # No extended-support billing: at the end of standard support EKS upgrades the control plane
+      # itself, so plan upgrades before that date (see the guide, "Day 2").
+      UpgradePolicy: {SupportType: STANDARD}
+
+  AdminAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdminPrincipal
+    Properties:
+      ClusterName: !Ref Cluster
+      PrincipalArn: !Ref AdminPrincipalArn
+      AccessPolicies:
+        - PolicyArn: !Sub "arn:${AWS::Partition}:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          AccessScope: {Type: cluster}
+
+  # ---- nodes ------------------------------------------------------------------------------------
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-eks-node"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      # No data access here: S3/Glue/MSK permissions live on per-workload IRSA roles.
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonEKS_CNI_Policy"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+
+  PlatformNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodegroupName: platform
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets: !Split [",", {"Fn::ImportValue": !Sub "${EnvName}-medallion-PrivateSubnetIds"}]
+      AmiType: AL2023_x86_64_STANDARD
+      CapacityType: ON_DEMAND
+      InstanceTypes: [!Ref PlatformInstanceType]
+      DiskSize: 50
+      ScalingConfig: {MinSize: 3, DesiredSize: 3, MaxSize: 6}
+      UpdateConfig: {MaxUnavailable: 1}
+      Labels: {medallion.io/node-group: platform}
+
+  StreamingNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodegroupName: streaming
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets: !Split [",", {"Fn::ImportValue": !Sub "${EnvName}-medallion-PrivateSubnetIds"}]
+      AmiType: AL2023_x86_64_STANDARD
+      CapacityType: ON_DEMAND
+      InstanceTypes: [!Ref StreamingInstanceType]
+      DiskSize: 50
+      ScalingConfig: {MinSize: 2, DesiredSize: 2, MaxSize: 4}
+      UpdateConfig: {MaxUnavailable: 1}
+      Labels: {medallion.io/node-group: streaming}
+
+  AnalyticsNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodegroupName: analytics
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets: !Split [",", {"Fn::ImportValue": !Sub "${EnvName}-medallion-PrivateSubnetIds"}]
+      AmiType: AL2023_x86_64_STANDARD
+      CapacityType: ON_DEMAND
+      InstanceTypes: [!Ref AnalyticsInstanceType]
+      DiskSize: 100
+      ScalingConfig: {MinSize: 3, DesiredSize: 3, MaxSize: !Ref AnalyticsMaxNodes}
+      UpdateConfig: {MaxUnavailable: 1}
+      Labels: {medallion.io/node-group: analytics}
+
+  # ---- IRSA ---------------------------------------------------------------------------------------
+  OidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt Cluster.OpenIdConnectIssuerUrl
+      ClientIdList: [sts.amazonaws.com]
+
+  EbsCsiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-ebs-csi"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:kube-system:ebs-csi-controller-sa","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: !Ref OidcProvider
+          Issuer: !Select [1, !Split ["//", !GetAtt Cluster.OpenIdConnectIssuerUrl]]
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+
+  # ---- add-ons (versions default to the one EKS recommends for the cluster version) -------------
+  VpcCniAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: vpc-cni
+      ResolveConflicts: OVERWRITE
+  KubeProxyAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: kube-proxy
+      ResolveConflicts: OVERWRITE
+  CoreDnsAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: PlatformNodeGroup  # CoreDNS pods need nodes to become ACTIVE
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: coredns
+      ResolveConflicts: OVERWRITE
+  EbsCsiAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: PlatformNodeGroup
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: aws-ebs-csi-driver
+      ServiceAccountRoleArn: !GetAtt EbsCsiRole.Arn
+      ResolveConflicts: OVERWRITE
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+    Export: {Name: !Sub "${EnvName}-medallion-ClusterName"}
+  ClusterSecurityGroupId:
+    Description: Security group EKS attaches to the control plane and managed nodes.
+    Value: !GetAtt Cluster.ClusterSecurityGroupId
+    Export: {Name: !Sub "${EnvName}-medallion-ClusterSecurityGroupId"}
+  OidcProviderArn:
+    Value: !Ref OidcProvider
+    Export: {Name: !Sub "${EnvName}-medallion-OidcProviderArn"}
+  OidcIssuerHost:
+    Description: Issuer URL without https://, as used in IRSA trust-policy condition keys.
+    Value: !Select [1, !Split ["//", !GetAtt Cluster.OpenIdConnectIssuerUrl]]
+    Export: {Name: !Sub "${EnvName}-medallion-OidcIssuerHost"}

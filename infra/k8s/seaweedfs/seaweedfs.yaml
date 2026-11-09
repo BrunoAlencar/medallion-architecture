@@ -51,7 +51,10 @@ spec:
         medallion.io/component: seaweedfs
     spec:
       initContainers:
-        # Renders the S3 identity file from the shared Secret so no key is stored in a ConfigMap.
+        # Renders the S3 identity + STS file from the shared Secret so no key is stored in a ConfigMap.
+        # STS: Lakekeeper calls AssumeRole on the S3 port (role LakekeeperVendedRole) to vend
+        # short-lived credentials limited to the silver bucket (the Lakekeeper UI's file listing needs
+        # them). Same file for -s3.config and -s3.iam.config, as in SeaweedFS's Lakekeeper guide.
         - name: render-s3-config
           image: chrislusf/seaweedfs:4.52
           command: ["/bin/sh", "-c"]
@@ -59,7 +62,14 @@ spec:
             - |
               cat > /etc/seaweedfs/s3.json <<EOF
               {"identities":[{"name":"medallion","credentials":[{"accessKey":"${S3_ACCESS_KEY}","secretKey":"${S3_SECRET_KEY}"}],
-                "actions":["Admin","Read","List","Tagging","Write"]}]}
+                "actions":["Admin","Read","List","Tagging","Write"]}],
+               "sts":{"tokenDuration":"1h","maxSessionLength":"12h","issuer":"seaweedfs-sts",
+                "signingKey":"${SEAWEEDFS_STS_SIGNING_KEY}"},
+               "roles":[{"roleName":"LakekeeperVendedRole","roleArn":"arn:aws:iam::000000000000:role/LakekeeperVendedRole",
+                "trustPolicy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"sts:AssumeRole"}]},
+                "attachedPolicies":["SilverWarehouse"]}],
+               "policies":[{"name":"SilverWarehouse","document":{"Version":"2012-10-17","Statement":[
+                {"Effect":"Allow","Action":"s3:*","Resource":["arn:aws:s3:::silver","arn:aws:s3:::silver/*"]}]}}]}
               EOF
           envFrom:
             - secretRef: {name: medallion-credentials}
@@ -78,6 +88,7 @@ spec:
             - -s3
             - -s3.port=8333
             - -s3.config=/etc/seaweedfs/s3.json
+            - -s3.iam.config=/etc/seaweedfs/s3.json
             - -metricsPort=9327
           ports:
             - {name: master, containerPort: 9333}

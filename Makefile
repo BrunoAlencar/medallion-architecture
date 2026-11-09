@@ -119,7 +119,7 @@ starrocks: ## StarRocks operator, 1 FE + 1 CN shared-data, gold/ops schema and u
 	$(KUBECTL) -n data wait --for=condition=complete job/starrocks-init --timeout=$(WAIT)
 
 .PHONY: spark
-spark: ## Spark Operator, Pipeline config, the (suspended) schedule
+spark: ## Spark Operator, Pipeline config, the every-minute Pipeline schedule
 	$(HELM) upgrade --install spark-operator spark-operator/spark-operator --version $(SPARK_OPERATOR_VERSION) \
 	  -n processing -f infra/helm/spark-operator-values.yaml --wait
 	$(KUBECTL) apply -f infra/k8s/spark/pipeline-config.yaml
@@ -178,12 +178,17 @@ seed-pause: ## Stop changing MongoDB (needed before verify)
 run-pipeline: ## Run the Pipeline once (STEPS=pipeline|bronze_to_silver,checks|...)
 	scripts/run-pipeline.sh $(or $(STEPS),pipeline)
 
+# The interval lives in infra/k8s/spark/scheduled-pipeline.yaml (every minute); EVERY=10m overrides it
+# until the next `make up` re-applies the file.
+comma := ,
 .PHONY: schedule-on
-schedule-on: ## Run the Pipeline every 10 minutes
-	$(KUBECTL) -n processing patch scheduledsparkapplication medallion-pipeline-scheduled --type merge -p '{"spec":{"suspend":false}}'
+schedule-on: ## Resume the Pipeline schedule (every minute, from the YAML; EVERY=10m to change it)
+	$(KUBECTL) -n processing patch scheduledsparkapplication medallion-pipeline-scheduled --type merge \
+	  -p '{"spec":{"suspend":false$(if $(EVERY),$(comma)"schedule":"@every $(EVERY)")}}'
+	@echo "Pipeline runs $$($(KUBECTL) -n processing get scheduledsparkapplication medallion-pipeline-scheduled -o jsonpath='{.spec.schedule}')."
 
 .PHONY: schedule-off
-schedule-off: ## Stop the 10-minute schedule
+schedule-off: ## Pause the Pipeline schedule
 	$(KUBECTL) -n processing patch scheduledsparkapplication medallion-pipeline-scheduled --type merge -p '{"spec":{"suspend":true}}'
 
 .PHONY: verify
@@ -239,6 +244,15 @@ mcp-env: ## Print the .mcp.json snippet for mcp-server-starrocks (read-only user
 	  '        "STARROCKS_HOST": "127.0.0.1", "STARROCKS_PORT": "9030",' \
 	  '        "STARROCKS_USER": "mcp_reader", "STARROCKS_PASSWORD": "$(STARROCKS_MCP_READER_PASSWORD)",' \
 	  '        "STARROCKS_DB": "gold"' '      }' '    }' '  }' '}'
+
+##@ AWS (production, docs/how-to/deploy-to-production.md)
+.PHONY: aws-lint
+aws-lint: ## Lint the CloudFormation templates (needs cfn-lint: pipx install cfn-lint)
+	cfn-lint -- infra/cloudformation/*.yaml
+
+.PHONY: aws-deploy
+aws-deploy: ## Deploy the AWS layer with CloudFormation (ENV=prod AWS_REGION=... [REVIEW=1] [STACKS="eks msk"])
+	infra/cloudformation/deploy.sh $(STACKS)
 
 ##@ Tests
 .PHONY: test

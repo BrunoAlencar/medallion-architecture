@@ -9,7 +9,9 @@ metadata:
   namespace: observability
 data:
   mimir.yaml: |
-    target: all
+    # `all` doesn't include the Alertmanager; without it the ruler's alerts get 404 ("Error sending
+    # alerts") and Grafana's Mimir Alertmanager data source has nothing to show.
+    target: all,alertmanager
     multitenancy_enabled: false
     usage_stats:
       enabled: false

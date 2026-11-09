@@ -32,11 +32,39 @@ require_cluster() {
     || die "kubectl context is not kind-${CLUSTER} (run: kubectl config use-context kind-${CLUSTER})"
 }
 
+# The every-minute schedule (infra/k8s/spark/scheduled-pipeline.yaml) must not overlap a manual run:
+# both rebuild the same gold *__staging tables, and replay-test resets the High-Water Mark. So the
+# first spark_run of a script pauses the schedule for the rest of that script, waits for a scheduled
+# run already in flight, and restores the schedule on exit.
+SCHEDULED_APP=medallion-pipeline-scheduled
+SCHEDULE_HELD=""
+hold_schedule() {
+  [ -z "$SCHEDULE_HELD" ] || return 0
+  SCHEDULE_HELD=1
+  local suspended i active
+  suspended="$(kubectl -n processing get scheduledsparkapplication "$SCHEDULED_APP" -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
+  [ "$suspended" = "false" ] || return 0
+  kubectl -n processing patch scheduledsparkapplication "$SCHEDULED_APP" --type merge -p '{"spec":{"suspend":true}}' >/dev/null
+  trap 'kubectl -n processing patch scheduledsparkapplication '"$SCHEDULED_APP"' --type merge -p "{\"spec\":{\"suspend\":false}}" >/dev/null 2>&1 && echo "    schedule resumed"' EXIT
+  echo "    schedule paused while this runs (resumed on exit)"
+  for i in $(seq 1 60); do
+    active="$(kubectl -n processing get sparkapplications -l "sparkoperator.k8s.io/scheduled-app-name=$SCHEDULED_APP" \
+      -o jsonpath='{range .items[*]}{.status.applicationState.state}{"\n"}{end}' 2>/dev/null \
+      | grep -cvE '^(COMPLETED|FAILED|SUBMISSION_FAILED)$' || true)"
+    [ "${active:-0}" = "0" ] && return 0
+    echo "    waiting for the scheduled run in progress"; sleep 5
+  done
+  warn "a scheduled run is still active after 5 min; continuing"
+}
+
 # spark_run <steps> [run_id]: submit the Pipeline template, wait, print the run's key log lines.
 # Sets SPARK_APP and SPARK_LOG (path to the driver log) for callers. Returns non-zero on failure.
 spark_run() {
+  hold_schedule
   local steps="$1" run_id="${2:-}"
-  [ -n "$run_id" ] || run_id="run-$(date -u +%Y%m%dT%H%M%SZ)-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+  # Random suffix without a pipe: `tr </dev/urandom | head -c 4` kills tr with SIGPIPE, which
+  # pipefail + set -e turn into exit 141 before anything is submitted.
+  [ -n "$run_id" ] || run_id="run-$(date -u +%Y%m%dT%H%M%SZ)-$(printf '%04x' "$RANDOM")"
   local slug; slug="$(echo "$steps" | tr ',_' '--' | tr -cd 'a-z0-9-' | cut -c1-24)"
   SPARK_APP="medallion-${slug}-$(date -u +%m%d%H%M%S)"
   SPARK_LOG="$(mktemp -t "${SPARK_APP}.XXXX").log"

@@ -10,6 +10,9 @@ spec:
   class: io.debezium.connector.mongodb.MongoDbConnector
   tasksMax: 1
   state: running
+  # Strimzi restarts failed tasks with backoff (e.g. S3 or MongoDB briefly unreachable);
+  # without it a short outage leaves the task FAILED until someone restarts it.
+  autoRestart: {enabled: true}
   config:
     mongodb.connection.string: mongodb://mongo-0.mongo.data.svc.cluster.local:27017/?replicaSet=rs0
     topic.prefix: cdc
@@ -36,6 +39,9 @@ spec:
   class: io.aiven.kafka.connect.s3.AivenKafkaConnectS3SinkConnector
   tasksMax: 3
   state: running
+  # Strimzi restarts failed tasks with backoff (e.g. S3 or MongoDB briefly unreachable);
+  # without it a short outage leaves the task FAILED until someone restarts it.
+  autoRestart: {enabled: true}
   config:
     topics: cdc.app.users
     aws.access.key.id: ${env:S3_ACCESS_KEY}

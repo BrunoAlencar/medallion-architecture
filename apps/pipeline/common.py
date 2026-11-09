@@ -17,6 +17,9 @@ def spark_conf(cfg: PipelineConfig) -> Dict[str, str]:
         f"{cat}.uri": cfg.iceberg_rest_uri,
         f"{cat}.warehouse": cfg.iceberg_warehouse,
         f"{cat}.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+        # Iceberg 1.12's default ("apache") is the SDK's Apache5HttpClient, absent from the SDK
+        # version Hadoop pins (ADR-0006); the image adds the matching URLConnection client instead.
+        f"{cat}.http-client.type": "urlconnection",
         f"{cat}.s3.endpoint": cfg.s3_endpoint,
         f"{cat}.s3.path-style-access": "true",
         f"{cat}.s3.access-key-id": cfg.s3_access_key,

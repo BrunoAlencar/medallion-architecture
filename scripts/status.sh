@@ -110,7 +110,8 @@ else fail "last run: $last" "guide › A Pipeline run failed"; fi
 info "7. Pipeline (Spark Operator)"
 kubectl -n processing get sparkapplications --sort-by=.metadata.creationTimestamp 2>/dev/null | tail -n 4 | sed 's/^/    /' || warn "no SparkApplications"
 sched="$(kubectl -n processing get scheduledsparkapplication medallion-pipeline-scheduled -o jsonpath='{.spec.suspend}' 2>/dev/null || echo missing)"
-[ "$sched" = "false" ] && ok "schedule ON (every 10 min)" || ok "schedule off (make schedule-on to enable)"
+every="$(kubectl -n processing get scheduledsparkapplication medallion-pipeline-scheduled -o jsonpath='{.spec.schedule}' 2>/dev/null || true)"
+[ "$sched" = "false" ] && ok "schedule ON (${every:-?})" || ok "schedule off (make schedule-on to enable)"
 
 info "8. Observability"
 if kubectl get ns observability >/dev/null 2>&1 && kubectl -n observability get sts mimir >/dev/null 2>&1; then

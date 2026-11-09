@@ -1,13 +1,16 @@
-# Optional: run the Pipeline every 10 minutes. Created suspended; `make schedule-on` / `make schedule-off`.
+# Runs the Pipeline every minute, so gold keeps up with the seeder. On from `make up`.
+# `make schedule-off` pauses it; `make schedule-on [EVERY=10m]` resumes it (optionally at another interval).
+# Forbid: if a run is still going when the next is due, that one is skipped (runs never overlap).
+# Before the sink has written bronze, a run finds no files and just succeeds.
 apiVersion: sparkoperator.k8s.io/v1beta2
 kind: ScheduledSparkApplication
 metadata:
   name: medallion-pipeline-scheduled
   namespace: processing
 spec:
-  schedule: "@every 10m"
+  schedule: "@every 1m"
   concurrencyPolicy: Forbid
-  suspend: true
+  suspend: false
   successfulRunHistoryLimit: 3
   failedRunHistoryLimit: 3
   template:

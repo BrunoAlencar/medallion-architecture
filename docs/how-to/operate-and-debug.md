@@ -55,7 +55,7 @@ Alerts (in `infra/k8s/alerts/medallion-alerts.yaml`) are evaluated by the Mimir 
 |---|---|---|---|
 | Grafana | <http://localhost:3000> | `admin` / `admin` (anonymous users get Viewer) | dashboards, Explore (logs, traces, metrics), alerts |
 | Kafka UI | <http://localhost:8081> | none | browse `cdc.app.users` messages, consumer groups, connector status and restarts |
-| Lakekeeper UI | <http://localhost:8181/ui> | none (`allowall`) | the `medallion` warehouse, `silver` namespace, table schemas and snapshots |
+| Lakekeeper UI | <http://localhost:8181/ui> | none (`allowall`) | the `medallion` warehouse, `silver` namespace, table schemas and snapshots, and a table's data/metadata files. The file listing runs in your browser with credentials Lakekeeper vends from SeaweedFS STS, against `seaweedfs-s3.data.svc.cluster.local:8333`: it needs `127.0.0.1 seaweedfs-s3.data.svc.cluster.local` in `/etc/hosts` (`make ui` prints the command) |
 | StarRocks FE | <http://localhost:8030> | `root` / `starrocks-root-dev` | FE state, queries, load jobs |
 | StarRocks SQL | `mysql -h127.0.0.1 -P9030 -uroot -pstarrocks-root-dev` (or `make sql`) | | query `gold`, `ops`, and silver via the `lakehouse` catalog |
 | SeaweedFS filer | <http://localhost:8888/buckets/> | none | browse bronze Parquet files, Iceberg metadata, LGTM objects |
@@ -215,6 +215,7 @@ Holds the silver tables' metadata (`lakehouse.silver.users`, `lakehouse.silver.p
   - The warehouse is missing → `kubectl -n data logs job/lakekeeper-warehouse`, then `make storage`.
   - Spark fails with `NoSuchNamespaceException`/`404` from the catalog → the warehouse name differs between `pipeline-config` (`ICEBERG_WAREHOUSE`) and Lakekeeper.
   - Spark gets S3 `403` on Iceberg data files while the catalog works → credential vending or remote signing (see the comments in `infra/k8s/lakekeeper/lakekeeper.yaml`). The Spark catalog also sends static keys (`apps/pipeline/common.py`).
+  - Lakekeeper UI says *Storage listing unavailable … no storage credentials* → the warehouse isn't vending: check `"sts-enabled": true` in the warehouse above, and that SeaweedFS STS answers (`seaweedfs-0` logs `Starting S3 API Server with advanced IAM integration`). A *network*/*CORS* error instead → `make ui` isn't running, or `/etc/hosts` lacks `127.0.0.1 seaweedfs-s3.data.svc.cluster.local`.
 
 ### Spark Operator and the Pipeline
 
@@ -350,7 +351,7 @@ Then find the source document in MongoDB (`make mongo-shell`, `db.users.find({_i
 
 ### Gold is stale
 
-*Alert `GoldStale`: gold hasn't been rebuilt for an hour.* The Pipeline only runs when asked: `make run-pipeline`, or `make schedule-on` for every 10 minutes. With the schedule on, check `kubectl -n processing get scheduledsparkapplication` (`LAST RUN`, `LAST RUN NAME`), then [A Pipeline run failed](#a-pipeline-run-failed).
+*Alert `GoldStale`: gold hasn't been rebuilt for an hour.* The Pipeline runs every minute from `infra/k8s/spark/scheduled-pipeline.yaml` unless someone ran `make schedule-off` (`make status` shows it), plus `make run-pipeline` on demand. Manual runs pause the schedule while they run. With the schedule on, check `kubectl -n processing get scheduledsparkapplication` (`LAST RUN`, `LAST RUN NAME`), then [A Pipeline run failed](#a-pipeline-run-failed).
 
 ### Silver does not match MongoDB
 
