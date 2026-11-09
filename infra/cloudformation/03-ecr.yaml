@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - container registries. Replaces `kind load`: the Kafka Connect image
+  (Debezium + Aiven S3 sink + MSK IAM auth) and the Spark Pipeline image. Tags are immutable, so
+  every deploy names a new tag (the git SHA) instead of re-pushing `:dev`. The seeder is not
+  deployed to production.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+
+Resources:
+  KafkaConnectRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvName}/medallion/kafka-connect"
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules": [
+            {"rulePriority": 1, "description": "drop untagged images after 14 days",
+             "selection": {"tagStatus": "untagged", "countType": "sinceImagePushed", "countUnit": "days", "countNumber": 14},
+             "action": {"type": "expire"}},
+            {"rulePriority": 2, "description": "keep the newest 50 images",
+             "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 50},
+             "action": {"type": "expire"}}
+          ]}
+
+  SparkRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvName}/medallion/spark"
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules": [
+            {"rulePriority": 1, "description": "drop untagged images after 14 days",
+             "selection": {"tagStatus": "untagged", "countType": "sinceImagePushed", "countUnit": "days", "countNumber": 14},
+             "action": {"type": "expire"}},
+            {"rulePriority": 2, "description": "keep the newest 50 images",
+             "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 50},
+             "action": {"type": "expire"}}
+          ]}
+
+Outputs:
+  KafkaConnectRepositoryUri:
+    Value: !GetAtt KafkaConnectRepository.RepositoryUri
+    Export: {Name: !Sub "${EnvName}-medallion-KafkaConnectRepositoryUri"}
+  SparkRepositoryUri:
+    Value: !GetAtt SparkRepository.RepositoryUri
+    Export: {Name: !Sub "${EnvName}-medallion-SparkRepositoryUri"}

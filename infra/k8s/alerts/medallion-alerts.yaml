@@ -76,6 +76,18 @@ groups:
           summary: "{{ $labels.component }} ({{ $labels.pod }}) is not answering its metrics scrape"
           runbook: "docs/how-to/operate-and-debug.md#component-checklist"
 
+      # RustFS pushes metrics (OTLP) instead of being scraped, so ComponentDown can't see it.
+      # The StatefulSet's readiness (RustFS /health/ready) stands in for `up`.
+      - alert: ObjectStorageNotReady
+        expr: |
+          max(kube_statefulset_status_replicas_ready{namespace="data", statefulset="rustfs"}) < 1
+          or absent(kube_statefulset_status_replicas_ready{namespace="data", statefulset="rustfs"})
+        for: 3m
+        labels: {severity: critical, component: rustfs}
+        annotations:
+          summary: "RustFS (S3 for every layer and the LGTM stack) is not ready"
+          runbook: "docs/how-to/operate-and-debug.md#rustfs"
+
       - alert: PodRestarting
         expr: increase(kube_pod_container_status_restarts_total{namespace=~"kafka|data|processing|observability"}[15m]) > 2
         labels: {severity: warning}

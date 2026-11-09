@@ -497,7 +497,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{namespace=~\"$namespace\"} |~ \"(?i)(OutOfMemory|OOMKilled|BackOff|Exception in thread)\"",
+          "expr": "{namespace=~\"$namespace\", container!=\"loki\"} |~ \"(?i)(OutOfMemory|OOMKilled|BackOff|Exception in thread)\"",
           "queryType": "range",
           "editorMode": "code"
         }

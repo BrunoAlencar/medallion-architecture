@@ -52,6 +52,12 @@ spec:
       prometheus.io/port: "8030"
       prometheus.io/path: /metrics
       medallion.io/component: starrocks-fe
+    # starrocks-init sets the root password; the FE/CN entrypoints log in as root (to register
+    # themselves) and read it from MYSQL_PWD. Without it the CN crash-loops with "Access denied".
+    feEnvVars:
+      - name: MYSQL_PWD
+        valueFrom:
+          secretKeyRef: {name: medallion-credentials, key: STARROCKS_ROOT_PASSWORD}
     configMapInfo:
       configMapName: starrocks-fe-cm
       resolveKey: fe.conf
@@ -72,6 +78,12 @@ spec:
       prometheus.io/port: "8040"
       prometheus.io/path: /metrics
       medallion.io/component: starrocks-cn
+    # starrocks-init sets the root password; the FE/CN entrypoints log in as root (to register
+    # themselves) and read it from MYSQL_PWD. Without it the CN crash-loops with "Access denied".
+    cnEnvVars:
+      - name: MYSQL_PWD
+        valueFrom:
+          secretKeyRef: {name: medallion-credentials, key: STARROCKS_ROOT_PASSWORD}
     configMapInfo:
       configMapName: starrocks-cn-cm
       resolveKey: cn.conf

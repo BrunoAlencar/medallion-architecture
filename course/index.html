@@ -231,7 +231,7 @@
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-5)">🍃</div><div><strong>MongoDB: the courtroom</strong><p>Where things actually happen. The app writes users here.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">👂</div><div><strong>Debezium: the stenographer</strong><p>Writes down every change MongoDB makes, in order, without interrupting.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-3)">📬</div><div><strong>Kafka: the wire service</strong><p>A durable queue that carries events from the people who write them to whoever reads them.</p></div></div>
-          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div><div><strong>Aiven S3 sink + SeaweedFS: the archive</strong><p>The sink files each batch of events into the bronze shelf of an S3-compatible store.</p></div></div>
+          <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div><div><strong>Aiven S3 sink + RustFS: the archive</strong><p>The sink files each batch of events into the bronze shelf of an S3-compatible store.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-2)">✍️</div><div><strong>PySpark: the editor</strong><p>Turns the raw archive into a clean silver table, then writes the gold summaries.</p></div></div>
           <div class="icon-row"><div class="icon-circle" style="background: var(--color-actor-1)">📰</div><div><strong>StarRocks: the newsstand</strong><p>A fast query engine where gold lives and where people (and AI tools) read results.</p></div></div>
         </div>
@@ -254,7 +254,7 @@
           <div class="arch-zone">
             <h4 class="arch-zone-label">Storage</h4>
             <div class="arch-component" data-desc="The Aiven S3 sink connector writes Kafka events as Parquet files into the bronze bucket. It needs no Schema Registry: each message carries its own schema."><div class="arch-icon">📦</div><span>Aiven S3 sink</span></div>
-            <div class="arch-component" data-desc="SeaweedFS stands in for Amazon S3 locally. Buckets: bronze, silver, gold, plus loki, tempo and mimir for monitoring data. MinIO was the first idea but its images are no longer published."><div class="arch-icon">🗄️</div><span>SeaweedFS</span></div>
+            <div class="arch-component" data-desc="RustFS stands in for Amazon S3 locally. Buckets: bronze, silver, gold, plus loki, tempo and mimir for monitoring data. MinIO was the first idea but its images are no longer published."><div class="arch-icon">🗄️</div><span>RustFS</span></div>
             <div class="arch-component" data-desc="Lakekeeper is an Iceberg REST catalog: the index card system that knows which files make up each Iceberg table. In AWS this role is played by the Glue Data Catalog."><div class="arch-icon">🗂️</div><span>Lakekeeper</span></div>
           </div>
           <div class="arch-zone">
@@ -325,7 +325,7 @@
 <span class="code-line">    <span class="code-property">value.converter.schemas.enable</span>: <span class="code-keyword">true</span></span>
 <span class="code-line">    <span class="code-property">format.output.type</span>: <span class="code-string">parquet</span></span>
 <span class="code-line">    <span class="code-property">format.output.fields</span>: <span class="code-string">key,value,offset,timestamp</span></span>
-<span class="code-line">    <span class="code-property">aws.s3.endpoint</span>: <span class="code-string">http://seaweedfs-s3.data:8333</span></span></code></pre>
+<span class="code-line">    <span class="code-property">aws.s3.endpoint</span>: <span class="code-string">http://rustfs.data:9000</span></span></code></pre>
           </div>
           <div class="translation-english">
             <span class="translation-label">PLAIN ENGLISH</span>
@@ -794,7 +794,7 @@
         <p>Every local piece was chosen because it has an AWS counterpart:</p>
         <div class="badge-list">
           <div class="badge-item"><code class="badge-code">kind</code><span class="badge-desc">→ Amazon EKS (managed Kubernetes)</span></div>
-          <div class="badge-item"><code class="badge-code">SeaweedFS</code><span class="badge-desc">→ Amazon S3, with IRSA for credentials</span></div>
+          <div class="badge-item"><code class="badge-code">RustFS</code><span class="badge-desc">→ Amazon S3, with IRSA for credentials</span></div>
           <div class="badge-item"><code class="badge-code">Strimzi + Connect</code><span class="badge-desc">→ Amazon MSK + MSK Connect, or Strimzi on EKS</span></div>
           <div class="badge-item"><code class="badge-code">Lakekeeper</code><span class="badge-desc">→ AWS Glue Data Catalog</span></div>
           <div class="badge-item"><code class="badge-code">Spark Operator</code><span class="badge-desc">→ EMR on EKS</span></div>
@@ -813,9 +813,9 @@
         <h2 class="screen-heading">Test the risky assumptions first</h2>
         <p>Before building the whole thing, the plan starts with four small <span class="term" data-definition="A spike is a short, throwaway experiment to answer one risky question (does X actually work?) before you commit to building on it.">spikes</span>. Any of these failing changes the design:</p>
         <div class="step-cards">
-          <div class="step-card"><div class="step-num">a</div><div class="step-body"><strong>Aiven sink on Kafka 4.3</strong><p>Parquet output, S3 path-style requests to SeaweedFS, and the <code>dt=/hr=</code> folder layout.</p></div></div>
+          <div class="step-card"><div class="step-num">a</div><div class="step-body"><strong>Aiven sink on Kafka 4.3</strong><p>Parquet output, S3 path-style requests to RustFS, and the <code>dt=/hr=</code> folder layout.</p></div></div>
           <div class="step-card"><div class="step-num">b</div><div class="step-body"><strong>The MERGE adds New Attribute columns by itself</strong><p>Spark 4.1 + Iceberg 1.12 adding a <code>phone</code> column with no manual change.</p></div></div>
-          <div class="step-card"><div class="step-num">c</div><div class="step-body"><strong>StarRocks shared-data on SeaweedFS</strong><p>Plus the Spark connector writing a staging table that is then swapped in.</p></div></div>
+          <div class="step-card"><div class="step-num">c</div><div class="step-body"><strong>StarRocks shared-data on RustFS</strong><p>Plus the Spark connector writing a staging table that is then swapped in.</p></div></div>
           <div class="step-card"><div class="step-num">d</div><div class="step-body"><strong>Mimir as one pod</strong><p>No official single-binary chart exists.</p></div></div>
         </div>
       </section>

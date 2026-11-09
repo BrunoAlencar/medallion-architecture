@@ -110,7 +110,12 @@ spec:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {memory: 384Mi}
 ---
-# Bootstraps Lakekeeper and creates the `medallion` warehouse on s3://silver/warehouse.
+# Bootstraps Lakekeeper and creates the `medallion` warehouse on s3://silver/warehouse, or, if it
+# exists, re-applies its storage profile (so profile changes reach running clusters).
+# sts-enabled: Lakekeeper vends short-lived credentials from RustFS STS. It signs in as the IAM user
+# `lakekeeper` (silver bucket only, created by the rustfs-init Job), not as root, so the vended
+# credentials can't reach other buckets. RustFS accepts but ignores sts-role-arn (kept so the profile
+# has the same shape as on AWS). The Lakekeeper UI needs these credentials to list a table's files.
 # Idempotent: safe to re-run with `make up-core`.
 apiVersion: batch/v1
 kind: Job
@@ -136,30 +141,35 @@ spec:
               # Bootstrap is one-shot; a second call answers 4xx, which is fine.
               curl -s -X POST $LK/management/v1/bootstrap -H 'Content-Type: application/json' \
                 -d '{"accept-terms-of-use": true}' || true
-              if curl -sf $LK/management/v1/warehouse | grep -q '"medallion"'; then
-                echo "warehouse medallion already exists"; exit 0
-              fi
-              cat > /tmp/wh.json <<EOF
-              {
-                "warehouse-name": "medallion",
+              cat > /tmp/storage.json <<EOF
                 "storage-profile": {
                   "type": "s3",
                   "bucket": "silver",
                   "key-prefix": "warehouse",
                   "region": "${S3_REGION}",
-                  "endpoint": "http://seaweedfs-s3.data.svc.cluster.local:8333",
+                  "endpoint": "http://rustfs.data.svc.cluster.local:9000",
                   "path-style-access": true,
                   "flavor": "s3-compat",
-                  "sts-enabled": false
+                  "sts-enabled": true,
+                  "sts-role-arn": "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
                 },
                 "storage-credential": {
                   "type": "s3",
                   "credential-type": "access-key",
-                  "aws-access-key-id": "${S3_ACCESS_KEY}",
-                  "aws-secret-access-key": "${S3_SECRET_KEY}"
-                },
-                "delete-profile": {"type": "hard"}
-              }
+                  "aws-access-key-id": "${LAKEKEEPER_S3_ACCESS_KEY}",
+                  "aws-secret-access-key": "${LAKEKEEPER_S3_SECRET_KEY}"
+                }
               EOF
+              # The list answers {"warehouses":[{"id":"…","warehouse-id":"…","name":"medallion",…}]}
+              WH_ID="$(curl -sf $LK/management/v1/warehouse | tr ',' '\n' \
+                | grep -B2 '"name":"medallion"' | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)"
+              if [ -n "$WH_ID" ]; then
+                { echo '{'; cat /tmp/storage.json; echo '}'; } > /tmp/update.json
+                curl -sf -X POST "$LK/management/v1/warehouse/$WH_ID/storage" \
+                  -H 'Content-Type: application/json' -d @/tmp/update.json >/dev/null
+                echo "warehouse medallion exists ($WH_ID): storage profile re-applied"
+                exit 0
+              fi
+              { echo '{"warehouse-name": "medallion", "delete-profile": {"type": "hard"},'; cat /tmp/storage.json; echo '}'; } > /tmp/wh.json
               curl -sf -X POST $LK/management/v1/warehouse -H 'Content-Type: application/json' -d @/tmp/wh.json
               echo; echo "warehouse medallion created"

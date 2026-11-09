@@ -5,7 +5,7 @@ metadata:
   name: pipeline-config
   namespace: processing
 data:
-  S3_ENDPOINT: http://seaweedfs-s3.data.svc.cluster.local:8333
+  S3_ENDPOINT: http://rustfs.data.svc.cluster.local:9000
   BRONZE_PATH: s3a://bronze/topics/cdc.app.users
   CDC_TOPIC: cdc.app.users
   ICEBERG_CATALOG: lakehouse

@@ -1,0 +1,141 @@
+# RustFS 1.0.4 (single node, single drive) as the local stand-in for Amazon S3. See ADR-0007.
+# Path-style S3 on http://rustfs.data.svc.cluster.local:9000; web console on :9001.
+# The rustfs-init Job below creates the buckets (bronze silver gold loki tempo mimir) and the IAM user
+# Lakekeeper vends credentials from (silver only).
+# Metrics: RustFS has no Prometheus /metrics endpoint. It pushes OTLP metrics to Alloy, which writes
+# them to Mimir with job="rustfs". Logs go to stdout like every other pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+  namespace: data
+  labels: {app.kubernetes.io/name: rustfs}
+spec:
+  selector: {app.kubernetes.io/name: rustfs}
+  ports:
+    - {name: s3, port: 9000, targetPort: 9000}
+    - {name: console, port: 9001, targetPort: 9001}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs
+  namespace: data
+spec:
+  serviceName: rustfs
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: rustfs}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: rustfs}
+      annotations:
+        # Names the pod in Loki. There is no prometheus.io/scrape: metrics are pushed (OTLP).
+        medallion.io/component: rustfs
+    spec:
+      # The image runs as the non-root user rustfs (10001); fsGroup makes the volume writable for it.
+      securityContext: {runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+        - name: rustfs
+          image: rustfs/rustfs:1.0.4
+          env:
+            # Root credentials = the shared S3 identity used by Connect, Spark, StarRocks and LGTM.
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: medallion-credentials, key: S3_ACCESS_KEY}}
+            - name: RUSTFS_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: medallion-credentials, key: S3_SECRET_KEY}}
+            - name: RUSTFS_REGION
+              valueFrom: {secretKeyRef: {name: medallion-credentials, key: S3_REGION}}
+            - {name: RUSTFS_VOLUMES, value: /data}
+            - {name: RUSTFS_ADDRESS, value: "0.0.0.0:9000"}
+            - {name: RUSTFS_CONSOLE_ENABLE, value: "true"}
+            - {name: RUSTFS_CONSOLE_ADDRESS, value: "0.0.0.0:9001"}
+            # Observability. Only the metrics endpoint is set, so traces and logs are not exported over
+            # OTLP. If Alloy is absent (make up-core), the exporter just fails its pushes; startup is unaffected.
+            - {name: RUSTFS_OBS_METRIC_ENDPOINT, value: "http://alloy.observability.svc.cluster.local:4318/v1/metrics"}
+            - {name: RUSTFS_OBS_SERVICE_NAME, value: rustfs}
+            - {name: RUSTFS_OBS_METER_INTERVAL, value: "15"}
+            - {name: RUSTFS_OBS_PROFILING_EXPORT_ENABLED, value: "false"}
+            # The image defaults to log files under /logs; empty = no files, and stdout on, so Alloy
+            # collects the logs from the pod like everywhere else.
+            - {name: RUSTFS_OBS_LOG_DIRECTORY, value: ""}
+            - {name: RUSTFS_OBS_LOG_STDOUT_ENABLED, value: "true"}
+            - {name: RUSTFS_OBS_LOGGER_LEVEL, value: info}
+          ports:
+            - {name: s3, containerPort: 9000}
+            - {name: console, containerPort: 9001}
+          readinessProbe:
+            httpGet: {path: /health/ready, port: 9000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: 9000}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 30Gi}}
+---
+# Creates the buckets and the `lakekeeper` IAM user (policy silver-warehouse: s3:* on the silver bucket
+# only). Lakekeeper calls STS AssumeRole as that user. RustFS ignores RoleArn and gives the temporary
+# credentials the caller's own policies (narrowed further by the session policy Lakekeeper sends), so
+# the vended credentials can never reach bronze, gold or the LGTM buckets.
+# Uses the RustFS admin API (/rustfs/admin/v3, plain JSON, SigV4-signed) through curl --aws-sigv4.
+# Idempotent: every call creates or overwrites.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-init
+  namespace: data
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: curlimages/curl:8.11.1
+          envFrom:
+            - secretRef: {name: medallion-credentials}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              EP=http://rustfs.data.svc.cluster.local:9000
+              SIG="aws:amz:${S3_REGION}:s3"
+              # rs <curl args>: a SigV4-signed call as the root identity; prints the body, fails on 4xx/5xx.
+              rs() { curl -sS --fail-with-body --aws-sigv4 "$SIG" --user "${S3_ACCESS_KEY}:${S3_SECRET_KEY}" "$@"; }
+              until curl -sf "$EP/health/ready" >/dev/null; do echo "waiting for rustfs"; sleep 3; done
+
+              for b in bronze silver gold loki tempo mimir; do
+                # 200 = created; 409 = it already exists (BucketAlreadyOwnedByYou). Both are fine.
+                code=$(curl -sS -o /tmp/out -w '%{http_code}' --aws-sigv4 "$SIG" \
+                  --user "${S3_ACCESS_KEY}:${S3_SECRET_KEY}" -X PUT "$EP/$b")
+                case "$code" in
+                  200|409) echo "bucket $b ok ($code)" ;;
+                  *) echo "bucket $b: HTTP $code"; cat /tmp/out; exit 1 ;;
+                esac
+              done
+
+              rs -X PUT "$EP/rustfs/admin/v3/add-canned-policy?name=silver-warehouse" \
+                -H 'Content-Type: application/json' \
+                -d '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::silver","arn:aws:s3:::silver/*"]}]}'
+              rs -X PUT "$EP/rustfs/admin/v3/add-user?accessKey=${LAKEKEEPER_S3_ACCESS_KEY}" \
+                -H 'Content-Type: application/json' \
+                -d "{\"secretKey\":\"${LAKEKEEPER_S3_SECRET_KEY}\",\"status\":\"enabled\"}"
+              rs -X PUT "$EP/rustfs/admin/v3/set-user-or-group-policy?policyName=silver-warehouse&userOrGroup=${LAKEKEEPER_S3_ACCESS_KEY}&isGroup=false"
+              echo "user ${LAKEKEEPER_S3_ACCESS_KEY} -> policy silver-warehouse"
+
+              buckets="$(rs "$EP/")"
+              for b in bronze silver gold loki tempo mimir; do
+                echo "$buckets" | grep -q "<Name>$b</Name>" || { echo "bucket $b missing"; exit 1; }
+              done
+              echo "all buckets present"

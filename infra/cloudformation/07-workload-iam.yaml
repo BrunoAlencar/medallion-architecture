@@ -1,0 +1,362 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - workload identities and secrets. Replaces the shared S3 keys and
+  passwords in infra/dev.env: one IRSA role per Kubernetes service account, each limited to the
+  buckets, Glue tables, Kafka topics/groups or AMP workspace it uses, and Secrets Manager secrets that
+  External Secrets syncs into the medallion-credentials Secret.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+
+Resources:
+  # ---- Kafka Connect (Strimzi on EKS): MSK via IAM, writes bronze -------------------------------
+  KafkaConnectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-kafka-connect"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:kafka:medallion-connect-connect","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: msk
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterArn"}
+              # cdc.* = Change Event topics (Debezium creates them, see the prod connector config);
+              # medallion-connect-* = Connect's config/offset/status topics.
+              - Effect: Allow
+                Action:
+                  - kafka-cluster:CreateTopic
+                  - kafka-cluster:DescribeTopic
+                  - kafka-cluster:DescribeTopicDynamicConfiguration
+                  - kafka-cluster:WriteData
+                  - kafka-cluster:ReadData
+                Resource:
+                  - !Sub
+                    - "arn:${AWS::Partition}:kafka:${AWS::Region}:${AWS::AccountId}:topic/${Name}/*/cdc.*"
+                    - Name: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterName"}
+                  - !Sub
+                    - "arn:${AWS::Partition}:kafka:${AWS::Region}:${AWS::AccountId}:topic/${Name}/*/medallion-connect-*"
+                    - Name: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterName"}
+              # medallion-connect = the worker group; connect-* = sink consumer groups (connect-bronze-s3-sink).
+              - Effect: Allow
+                Action: ["kafka-cluster:AlterGroup", "kafka-cluster:DescribeGroup"]
+                Resource:
+                  - !Sub
+                    - "arn:${AWS::Partition}:kafka:${AWS::Region}:${AWS::AccountId}:group/${Name}/*/medallion-connect"
+                    - Name: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterName"}
+                  - !Sub
+                    - "arn:${AWS::Partition}:kafka:${AWS::Region}:${AWS::AccountId}:group/${Name}/*/connect-*"
+                    - Name: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterName"}
+        - PolicyName: bronze-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-BronzeBucketName"}
+              - Effect: Allow
+                Action: ["s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/topics/*"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-BronzeBucketName"}
+              - Effect: Allow
+                Action: ["kms:GenerateDataKey", "kms:Decrypt"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+
+  # ---- Spark Pipeline: reads bronze, owns silver (Glue + S3) -------------------------------------
+  SparkPipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-spark-pipeline"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:processing:spark","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: lake
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:ListBucket", "s3:GetBucketLocation"]
+                Resource:
+                  - !Sub
+                    - "arn:${AWS::Partition}:s3:::${Bucket}"
+                    - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-BronzeBucketName"}
+                  - !Sub
+                    - "arn:${AWS::Partition}:s3:::${Bucket}"
+                    - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-SilverBucketName"}
+              - Effect: Allow
+                Action: ["s3:GetObject"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-BronzeBucketName"}
+              - Effect: Allow
+                Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-SilverBucketName"}
+              - Effect: Allow
+                Action: ["kms:GenerateDataKey", "kms:Decrypt"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+              - Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                  - glue:DeleteTable
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub
+                    - "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${Db}"
+                    - Db: {"Fn::ImportValue": !Sub "${EnvName}-medallion-SilverDatabaseName"}
+                  - !Sub
+                    - "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${Db}/*"
+                    - Db: {"Fn::ImportValue": !Sub "${EnvName}-medallion-SilverDatabaseName"}
+
+  # ---- StarRocks FE/CN: the gold storage volume only ----------------------------------------------
+  # No Glue/silver access: StarRocks' Glue catalog documents only instance-profile, assumed-role
+  # and static-key credentials, not IRSA, so the optional `lakehouse` catalog is left out in
+  # production (query silver ad hoc with Athena). See the guide, step 8.
+  StarRocksRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-starrocks"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:data:starrocks","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: gold
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:ListBucket", "s3:GetBucketLocation"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-GoldBucketName"}
+              - Effect: Allow
+                Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-GoldBucketName"}
+              - Effect: Allow
+                Action: ["kms:GenerateDataKey", "kms:Decrypt"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+
+  # ---- Kafka Exporter (standalone, danielqsj/kafka_exporter >= 1.9 with --sasl.mechanism=awsiam) ---
+  # Keeps kafka_consumergroup_lag / kafka_topic_partition_current_offset / kafka_brokers, which the
+  # Pipeline Lag panel and the BronzeSinkLagging alert use. Describe-only: it reads no messages.
+  KafkaExporterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-kafka-exporter"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:kafka:kafka-exporter","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: msk-describe
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterArn"}
+              - Effect: Allow
+                Action: ["kafka-cluster:DescribeTopic"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:kafka:${AWS::Region}:${AWS::AccountId}:topic/${Name}/*"
+                  - Name: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterName"}
+              - Effect: Allow
+                Action: ["kafka-cluster:DescribeGroup"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:kafka:${AWS::Region}:${AWS::AccountId}:group/${Name}/*"
+                  - Name: {"Fn::ImportValue": !Sub "${EnvName}-medallion-MskClusterName"}
+
+  # ---- Loki and Tempo: each its own bucket ---------------------------------------------------------
+  LokiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-loki"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:observability:loki","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: loki-bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:ListBucket"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-LokiBucketName"}
+              - Effect: Allow
+                Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-LokiBucketName"}
+              - Effect: Allow
+                Action: ["kms:GenerateDataKey", "kms:Decrypt"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+
+  TempoRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-tempo"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:observability:tempo","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: tempo-bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:ListBucket"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-TempoBucketName"}
+              - Effect: Allow
+                Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: {"Fn::ImportValue": !Sub "${EnvName}-medallion-TempoBucketName"}
+              - Effect: Allow
+                Action: ["kms:GenerateDataKey", "kms:Decrypt"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+
+  # ---- Alloy writes metrics to AMP; Grafana reads them ------------------------------------------
+  AlloyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-alloy"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:observability:alloy","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: amp-remote-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["aps:RemoteWrite"]
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-AmpWorkspaceArn"}
+
+  GrafanaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-grafana"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:observability:grafana","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: amp-query
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:QueryMetrics
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:GetMetricMetadata
+                  - aps:ListRules
+                  - aps:ListAlerts
+                  - aps:ListAlertManagerAlerts
+                  - aps:ListAlertManagerAlertGroups
+                  - aps:ListAlertManagerReceivers
+                  - aps:ListAlertManagerSilences
+                  - aps:GetAlertManagerStatus
+                Resource: {"Fn::ImportValue": !Sub "${EnvName}-medallion-AmpWorkspaceArn"}
+
+  # ---- External Secrets Operator: reads only this environment's medallion secrets ---------------
+  ExternalSecretsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-medallion-external-secrets"
+      AssumeRolePolicyDocument: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"${Provider}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${Issuer}:sub":"system:serviceaccount:external-secrets:external-secrets","${Issuer}:aud":"sts.amazonaws.com"}}}]}'
+        - Provider: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcProviderArn"}
+          Issuer: {"Fn::ImportValue": !Sub "${EnvName}-medallion-OidcIssuerHost"}
+      Policies:
+        - PolicyName: read-medallion-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+                Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvName}/medallion/*"
+
+  # ---- secrets (replace infra/dev.env). Alphanumeric only: they pass through SQL and shell. -----
+  StarRocksRootSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvName}/medallion/starrocks-root"
+      GenerateSecretString: {PasswordLength: 32, ExcludePunctuation: true}
+  StarRocksPipelineSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvName}/medallion/starrocks-pipeline"
+      GenerateSecretString: {PasswordLength: 32, ExcludePunctuation: true}
+  StarRocksMcpReaderSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvName}/medallion/starrocks-mcp-reader"
+      GenerateSecretString: {PasswordLength: 32, ExcludePunctuation: true}
+  StarRocksGrafanaReaderSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvName}/medallion/starrocks-grafana-reader"
+      GenerateSecretString: {PasswordLength: 32, ExcludePunctuation: true}
+  GrafanaAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvName}/medallion/grafana-admin"
+      GenerateSecretString: {PasswordLength: 32, ExcludePunctuation: true}
+  # Filled in by hand after the stack is created (step 3 of the guide); never put it in a template.
+  MongoCdcSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvName}/medallion/mongo-cdc"
+      Description: Connection string of the Debezium user on the production MongoDB (key connectionString)
+      SecretString: '{"connectionString":"REPLACE_ME"}'
+
+Outputs:
+  KafkaConnectRoleArn:
+    Value: !GetAtt KafkaConnectRole.Arn
+  SparkPipelineRoleArn:
+    Value: !GetAtt SparkPipelineRole.Arn
+  StarRocksRoleArn:
+    Value: !GetAtt StarRocksRole.Arn
+  KafkaExporterRoleArn:
+    Value: !GetAtt KafkaExporterRole.Arn
+  LokiRoleArn:
+    Value: !GetAtt LokiRole.Arn
+  TempoRoleArn:
+    Value: !GetAtt TempoRole.Arn
+  AlloyRoleArn:
+    Value: !GetAtt AlloyRole.Arn
+  GrafanaRoleArn:
+    Value: !GetAtt GrafanaRole.Arn
+  ExternalSecretsRoleArn:
+    Value: !GetAtt ExternalSecretsRole.Arn

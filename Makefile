@@ -31,7 +31,9 @@ help: ## Show this help
 .PHONY: prereqs
 prereqs: ## Check docker/kind/kubectl/helm (install with: brew install kind kubectl helm)
 	@for t in docker kind kubectl helm; do command -v $$t >/dev/null && echo "✔ $$t" || { echo "✘ $$t missing (brew install $$t; Docker Desktop/OrbStack/Colima for docker)"; exit 1; }; done
-	@docker info --format '{{.MemTotal}} {{.NCPU}}' | awk '{printf "✔ docker: %.1f GiB RAM, %s CPUs (want >= 16 GiB / 8)\n", $$1/1073741824, $$2}'
+	@info=$$(docker info --format '{{.MemTotal}} {{.NCPU}}' 2>/dev/null) || { echo "✘ docker daemon not reachable — start Docker Desktop/OrbStack/Colima (e.g. 'orb start')"; exit 1; }; \
+	echo "$$info" | awk '{ gib = $$1/1073741824; ok = (gib >= 15.5 && $$2 >= 8); \
+	  printf "%s docker: %.1f GiB RAM, %s CPUs (want >= 16 GiB / 8)\n", (ok ? "✔" : "⚠"), gib, $$2 }'
 
 .PHONY: cluster
 cluster: ## Create the kind cluster (1 control plane + 2 workers)
@@ -40,7 +42,7 @@ cluster: ## Create the kind cluster (1 control plane + 2 workers)
 	$(KUBECTL) apply -f infra/k8s/namespaces/namespaces.yaml
 
 .PHONY: images
-images: ## Build the 3 images and load them into kind
+images: ## Build the 3 images and load them into kind (cached; part of make up)
 	docker build -t medallion/kafka-connect:dev images/kafka-connect
 	docker build -t medallion/spark:dev -f images/spark/Dockerfile .
 	docker build -t medallion/seeder:dev -f images/seeder/Dockerfile .
@@ -69,18 +71,19 @@ helm-repos:
 
 ##@ Bring up
 .PHONY: up
-up: cluster secrets helm-repos storage observability core ## Everything: storage, LGTM, Kafka/CDC, StarRocks, Spark, seeder
+up: prereqs cluster images secrets helm-repos storage observability core ## Everything: images, storage, LGTM, Kafka/CDC, StarRocks, Spark, seeder
 	@echo; echo "Up. Next: make status · make run-pipeline · make ui"
 
 .PHONY: up-core
-up-core: cluster secrets helm-repos storage core ## Everything except the LGTM stack (lighter on memory)
+up-core: prereqs cluster images secrets helm-repos storage core ## Everything except the LGTM stack (lighter on memory)
+	@echo; echo "Up (no LGTM). Next: make status · make run-pipeline · make ui"
 
 .PHONY: storage
-storage: ## SeaweedFS + buckets, Postgres + Lakekeeper + warehouse
-	$(KUBECTL) -n data delete job seaweedfs-buckets --ignore-not-found
-	$(KUBECTL) apply -f infra/k8s/seaweedfs/seaweedfs.yaml
-	$(KUBECTL) -n data rollout status sts/seaweedfs --timeout=$(WAIT)
-	$(KUBECTL) -n data wait --for=condition=complete job/seaweedfs-buckets --timeout=$(WAIT)
+storage: ## RustFS + buckets + Lakekeeper IAM user, Postgres + Lakekeeper + warehouse
+	$(KUBECTL) -n data delete job rustfs-init --ignore-not-found
+	$(KUBECTL) apply -f infra/k8s/rustfs/rustfs.yaml
+	$(KUBECTL) -n data rollout status sts/rustfs --timeout=$(WAIT)
+	$(KUBECTL) -n data wait --for=condition=complete job/rustfs-init --timeout=$(WAIT)
 	$(KUBECTL) -n data delete job lakekeeper-warehouse --ignore-not-found
 	$(KUBECTL) apply -f infra/k8s/lakekeeper/lakekeeper.yaml
 	$(KUBECTL) -n data wait --for=condition=complete job/lakekeeper-warehouse --timeout=$(WAIT)
@@ -116,28 +119,30 @@ starrocks: ## StarRocks operator, 1 FE + 1 CN shared-data, gold/ops schema and u
 	$(KUBECTL) -n data wait --for=condition=complete job/starrocks-init --timeout=$(WAIT)
 
 .PHONY: spark
-spark: ## Spark Operator, Pipeline config, the (suspended) schedule
+spark: ## Spark Operator, Pipeline config, the every-minute Pipeline schedule
 	$(HELM) upgrade --install spark-operator spark-operator/spark-operator --version $(SPARK_OPERATOR_VERSION) \
 	  -n processing -f infra/helm/spark-operator-values.yaml --wait
 	$(KUBECTL) apply -f infra/k8s/spark/pipeline-config.yaml
 	$(KUBECTL) apply -f infra/k8s/spark/scheduled-pipeline.yaml
 
 .PHONY: observability
+# --wait: a chart that never gets Ready fails here, at its own step, not later in make status.
 observability: ## Mimir, Loki, Tempo, kube-state-metrics, Alloy, Grafana, dashboards, alert rules
 	$(MAKE) alerts
 	$(KUBECTL) apply -f infra/k8s/mimir/mimir.yaml
 	$(HELM) upgrade --install loki grafana-community/loki --version $(LOKI_CHART_VERSION) -n observability \
-	  -f infra/helm/loki-values.yaml \
+	  -f infra/helm/loki-values.yaml --wait --timeout $(WAIT) \
 	  --set loki.storage.s3.accessKeyId=$(S3_ACCESS_KEY) --set loki.storage.s3.secretAccessKey=$(S3_SECRET_KEY)
 	$(HELM) upgrade --install tempo grafana-community/tempo --version $(TEMPO_CHART_VERSION) -n observability \
-	  -f infra/helm/tempo-values.yaml \
+	  -f infra/helm/tempo-values.yaml --wait --timeout $(WAIT) \
 	  --set tempo.storage.trace.s3.access_key=$(S3_ACCESS_KEY) --set tempo.storage.trace.s3.secret_key=$(S3_SECRET_KEY)
 	$(HELM) upgrade --install kube-state-metrics prometheus-community/kube-state-metrics --version $(KSM_CHART_VERSION) \
-	  -n observability -f infra/helm/kube-state-metrics-values.yaml
-	$(HELM) upgrade --install alloy grafana/alloy --version $(ALLOY_CHART_VERSION) -n observability -f infra/helm/alloy-values.yaml
+	  -n observability -f infra/helm/kube-state-metrics-values.yaml --wait --timeout $(WAIT)
+	$(HELM) upgrade --install alloy grafana/alloy --version $(ALLOY_CHART_VERSION) -n observability \
+	  -f infra/helm/alloy-values.yaml --wait --timeout $(WAIT)
 	$(MAKE) dashboards
 	$(HELM) upgrade --install grafana grafana-community/grafana --version $(GRAFANA_CHART_VERSION) -n observability \
-	  -f infra/helm/grafana-values.yaml
+	  -f infra/helm/grafana-values.yaml --wait --timeout $(WAIT)
 	$(KUBECTL) -n observability rollout status sts/mimir --timeout=$(WAIT)
 
 .PHONY: dashboards
@@ -173,12 +178,17 @@ seed-pause: ## Stop changing MongoDB (needed before verify)
 run-pipeline: ## Run the Pipeline once (STEPS=pipeline|bronze_to_silver,checks|...)
 	scripts/run-pipeline.sh $(or $(STEPS),pipeline)
 
+# The interval lives in infra/k8s/spark/scheduled-pipeline.yaml (every minute); EVERY=10m overrides it
+# until the next `make up` re-applies the file.
+comma := ,
 .PHONY: schedule-on
-schedule-on: ## Run the Pipeline every 10 minutes
-	$(KUBECTL) -n processing patch scheduledsparkapplication medallion-pipeline-scheduled --type merge -p '{"spec":{"suspend":false}}'
+schedule-on: ## Resume the Pipeline schedule (every minute, from the YAML; EVERY=10m to change it)
+	$(KUBECTL) -n processing patch scheduledsparkapplication medallion-pipeline-scheduled --type merge \
+	  -p '{"spec":{"suspend":false$(if $(EVERY),$(comma)"schedule":"@every $(EVERY)")}}'
+	@echo "Pipeline runs $$($(KUBECTL) -n processing get scheduledsparkapplication medallion-pipeline-scheduled -o jsonpath='{.spec.schedule}')."
 
 .PHONY: schedule-off
-schedule-off: ## Stop the 10-minute schedule
+schedule-off: ## Pause the Pipeline schedule
 	$(KUBECTL) -n processing patch scheduledsparkapplication medallion-pipeline-scheduled --type merge -p '{"spec":{"suspend":true}}'
 
 .PHONY: verify
@@ -199,7 +209,7 @@ status: ## Check every component in data-flow order (read-only)
 	scripts/status.sh
 
 .PHONY: ui
-ui: ## Port-forward Grafana, Kafka UI, Lakekeeper, StarRocks, SeaweedFS, Connect REST
+ui: ## Port-forward Grafana, Kafka UI, Lakekeeper, StarRocks, RustFS, Connect REST
 	scripts/ui.sh
 
 .PHONY: logs-pipeline
@@ -234,6 +244,15 @@ mcp-env: ## Print the .mcp.json snippet for mcp-server-starrocks (read-only user
 	  '        "STARROCKS_HOST": "127.0.0.1", "STARROCKS_PORT": "9030",' \
 	  '        "STARROCKS_USER": "mcp_reader", "STARROCKS_PASSWORD": "$(STARROCKS_MCP_READER_PASSWORD)",' \
 	  '        "STARROCKS_DB": "gold"' '      }' '    }' '  }' '}'
+
+##@ AWS (production, docs/how-to/deploy-to-production.md)
+.PHONY: aws-lint
+aws-lint: ## Lint the CloudFormation templates (needs cfn-lint: pipx install cfn-lint)
+	cfn-lint -- infra/cloudformation/*.yaml
+
+.PHONY: aws-deploy
+aws-deploy: ## Deploy the AWS layer with CloudFormation (ENV=prod AWS_REGION=... [REVIEW=1] [STACKS="eks msk"])
+	infra/cloudformation/deploy.sh $(STACKS)
 
 ##@ Tests
 .PHONY: test

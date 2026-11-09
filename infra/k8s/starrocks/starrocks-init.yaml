@@ -60,6 +60,8 @@ data:
     GRANT ALL ON ALL TABLES IN DATABASE gold TO USER 'pipeline'@'%';
     GRANT ALL ON DATABASE ops TO USER 'pipeline'@'%';
     GRANT ALL ON ALL TABLES IN DATABASE ops TO USER 'pipeline'@'%';
+    -- Shared-data: CREATE TABLE (the Pipeline's gold `*__staging ... LIKE`) needs the volume too.
+    GRANT USAGE ON STORAGE VOLUME gold_volume TO USER 'pipeline'@'%';
 
     -- For mcp-server-starrocks (no read-only mode exists there, so this grant is the only guard).
     CREATE USER IF NOT EXISTS 'mcp_reader'@'%' IDENTIFIED BY '${STARROCKS_MCP_READER_PASSWORD}';
@@ -76,7 +78,7 @@ data:
     PROPERTIES (
       "enabled" = "true",
       "aws.s3.region" = "${S3_REGION}",
-      "aws.s3.endpoint" = "http://seaweedfs-s3.data.svc.cluster.local:8333",
+      "aws.s3.endpoint" = "http://rustfs.data.svc.cluster.local:9000",
       "aws.s3.use_aws_sdk_default_behavior" = "false",
       "aws.s3.use_instance_profile" = "false",
       "aws.s3.access_key" = "${S3_ACCESS_KEY}",
@@ -92,7 +94,7 @@ data:
       "iceberg.catalog.uri" = "http://lakekeeper.data.svc.cluster.local:8181/catalog",
       "iceberg.catalog.warehouse" = "medallion",
       "aws.s3.region" = "${S3_REGION}",
-      "aws.s3.endpoint" = "http://seaweedfs-s3.data.svc.cluster.local:8333",
+      "aws.s3.endpoint" = "http://rustfs.data.svc.cluster.local:9000",
       "aws.s3.access_key" = "${S3_ACCESS_KEY}",
       "aws.s3.secret_key" = "${S3_SECRET_KEY}",
       "aws.s3.enable_path_style_access" = "true"
@@ -118,8 +120,10 @@ spec:
             - |
               set -euo pipefail
               FE=starrocks-fe-service.data.svc.cluster.local
+              # Drop full-line `--` comments first: StarRocks rejects a statement that starts with one
+              # (ERROR 1064 ... Unexpected input '<EOF>'), and eval would run backticks inside them.
               render() { eval "cat <<__EOF__
-              $(cat "$1")
+              $(sed '/^[[:space:]]*--/d' "$1")
               __EOF__"; }
               sr() { mysql -h "$FE" -P 9030 -uroot "$@"; }
               until mysql -h "$FE" -P 9030 -uroot -p"$STARROCKS_ROOT_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1 \

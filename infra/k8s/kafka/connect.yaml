@@ -125,3 +125,29 @@ spec:
     strimzi.io/name: medallion-connect-connect
   ports:
     - {name: metrics, port: 9404, targetPort: 9404}
+---
+# Strimzi's generated NetworkPolicy opens the Connect REST API (8083) only to the Connect pods and
+# the cluster operator, and kind enforces NetworkPolicies. NetworkPolicies add up, so this one also
+# lets Kafka UI (its Kafka Connect page) and `make status` probe pods (label medallion.io/probe=true,
+# any namespace) in. `make ui` port-forwards need no rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: medallion-connect-rest-access
+  namespace: kafka
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/name: medallion-connect-connect
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka-ui
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              medallion.io/probe: "true"
+      ports:
+        - {port: 8083, protocol: TCP}

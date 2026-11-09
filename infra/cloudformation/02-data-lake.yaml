@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - data lake. Replaces RustFS and Lakekeeper: one KMS key, S3 buckets for
+  bronze (append-only Parquet from the Aiven sink), silver (Iceberg), gold (StarRocks shared-data),
+  Loki and Tempo, and the Glue database that is silver's Iceberg
+  catalog (ADR-0003). Buckets, key and database are retained if the stack is deleted.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+  SilverDatabaseName:
+    Type: String
+    Default: silver
+    AllowedPattern: "^[a-z][a-z0-9_]{0,63}$"
+    Description: >-
+      Glue database for the silver Iceberg tables. The Pipeline's SILVER_NAMESPACE must match.
+      Glue names are per account and Region, so pick another name if `silver` is taken.
+  BronzeToIntelligentTieringDays:
+    Type: Number
+    Default: 30
+    MinValue: 0
+    Description: >-
+      Move bronze objects to S3 Intelligent-Tiering after this many days. Bronze is never expired
+      here: it is the replay source (make replay-test re-reads all of it).
+
+Resources:
+  DataKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub "${EnvName} medallion - S3 buckets, MSK volumes, EKS secrets"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # Account root: lets IAM policies (the workload roles) grant use of the key.
+          - Sid: AccountAdmin
+            Effect: Allow
+            Principal: {AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"}
+            Action: "kms:*"
+            Resource: "*"
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${EnvName}-medallion-data"
+      TargetKeyId: !Ref DataKey
+
+  # ---- buckets ----------------------------------------------------------------------------------
+  BronzeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvName}-medallion-bronze-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: "aws:kms", KMSMasterKeyID: !GetAtt DataKey.Arn}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: tiering-and-cleanup
+            Status: Enabled
+            Transitions:
+              - {StorageClass: INTELLIGENT_TIERING, TransitionInDays: !Ref BronzeToIntelligentTieringDays}
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+            NoncurrentVersionExpiration: {NoncurrentDays: 30}
+
+  SilverBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvName}-medallion-silver-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: "aws:kms", KMSMasterKeyID: !GetAtt DataKey.Arn}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      # Iceberg keeps its own snapshots; versioning is a safety net against a bad delete.
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: cleanup
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+            NoncurrentVersionExpiration: {NoncurrentDays: 30}
+
+  GoldBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvName}-medallion-gold-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: "aws:kms", KMSMasterKeyID: !GetAtt DataKey.Arn}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: cleanup
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+            NoncurrentVersionExpiration: {NoncurrentDays: 14}
+
+  # Loki and Tempo get a bucket each, as locally. They enforce their own retention (compactor), so
+  # no versioning, which they would churn.
+  LokiBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvName}-medallion-loki-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: "aws:kms", KMSMasterKeyID: !GetAtt DataKey.Arn}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      LifecycleConfiguration:
+        Rules:
+          - Id: cleanup
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+
+  TempoBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvName}-medallion-tempo-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: "aws:kms", KMSMasterKeyID: !GetAtt DataKey.Arn}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      LifecycleConfiguration:
+        Rules:
+          - Id: cleanup
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+
+  # ---- TLS-only access on every bucket ------------------------------------------------------------
+  BronzeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BronzeBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt BronzeBucket.Arn, !Sub "${BronzeBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+  SilverBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SilverBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt SilverBucket.Arn, !Sub "${SilverBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+  GoldBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref GoldBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt GoldBucket.Arn, !Sub "${GoldBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+  LokiBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LokiBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt LokiBucket.Arn, !Sub "${LokiBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+  TempoBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TempoBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt TempoBucket.Arn, !Sub "${TempoBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+
+  # ---- silver catalog (replaces Lakekeeper + Postgres) -------------------------------------------
+  SilverDatabase:
+    Type: AWS::Glue::Database
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref SilverDatabaseName
+        Description: Medallion silver - Iceberg tables written by the PySpark Pipeline
+        LocationUri: !Sub "s3://${SilverBucket}/warehouse/${SilverDatabaseName}"
+
+Outputs:
+  DataKeyArn:
+    Value: !GetAtt DataKey.Arn
+    Export: {Name: !Sub "${EnvName}-medallion-DataKeyArn"}
+  BronzeBucketName:
+    Value: !Ref BronzeBucket
+    Export: {Name: !Sub "${EnvName}-medallion-BronzeBucketName"}
+  SilverBucketName:
+    Value: !Ref SilverBucket
+    Export: {Name: !Sub "${EnvName}-medallion-SilverBucketName"}
+  GoldBucketName:
+    Value: !Ref GoldBucket
+    Export: {Name: !Sub "${EnvName}-medallion-GoldBucketName"}
+  LokiBucketName:
+    Value: !Ref LokiBucket
+    Export: {Name: !Sub "${EnvName}-medallion-LokiBucketName"}
+  TempoBucketName:
+    Value: !Ref TempoBucket
+    Export: {Name: !Sub "${EnvName}-medallion-TempoBucketName"}
+  SilverDatabaseName:
+    Value: !Ref SilverDatabase
+    Export: {Name: !Sub "${EnvName}-medallion-SilverDatabaseName"}
+  SilverWarehouse:
+    Description: Iceberg warehouse location for the Pipeline (ICEBERG_WAREHOUSE).
+    Value: !Sub "s3://${SilverBucket}/warehouse"

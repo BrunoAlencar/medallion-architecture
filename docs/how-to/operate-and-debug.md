@@ -4,7 +4,7 @@ How to check that each component works, how to read the dashboards, and what to 
 Domain words (User, Change Event, Event Position, High-Water Mark, Pipeline Lag, …) are defined in [GLOSSARY.md](../../GLOSSARY.md).
 
 ```
-MongoDB ─► Debezium (Kafka Connect) ─► Kafka ─► Aiven S3 sink ─► bronze (Parquet, SeaweedFS)
+MongoDB ─► Debezium (Kafka Connect) ─► Kafka ─► Aiven S3 sink ─► bronze (Parquet, RustFS)
    ─► PySpark Pipeline (Spark Operator) ─► silver (Iceberg, Lakekeeper) ─► gold (StarRocks)
 Observability: Alloy ─► Mimir · Loki · Tempo ─► Grafana
 ```
@@ -55,11 +55,10 @@ Alerts (in `infra/k8s/alerts/medallion-alerts.yaml`) are evaluated by the Mimir 
 |---|---|---|---|
 | Grafana | <http://localhost:3000> | `admin` / `admin` (anonymous users get Viewer) | dashboards, Explore (logs, traces, metrics), alerts |
 | Kafka UI | <http://localhost:8081> | none | browse `cdc.app.users` messages, consumer groups, connector status and restarts |
-| Lakekeeper UI | <http://localhost:8181/ui> | none (`allowall`) | the `medallion` warehouse, `silver` namespace, table schemas and snapshots |
+| Lakekeeper UI | <http://localhost:8181/ui> | none (`allowall`) | the `medallion` warehouse, `silver` namespace, table schemas and snapshots, and a table's data/metadata files. The file listing runs in your browser with credentials Lakekeeper vends from RustFS STS, against `rustfs.data.svc.cluster.local:9000`: it needs `127.0.0.1 rustfs.data.svc.cluster.local` in `/etc/hosts` (`make ui` prints the command) |
 | StarRocks FE | <http://localhost:8030> | `root` / `starrocks-root-dev` | FE state, queries, load jobs |
 | StarRocks SQL | `mysql -h127.0.0.1 -P9030 -uroot -pstarrocks-root-dev` (or `make sql`) | | query `gold`, `ops`, and silver via the `lakehouse` catalog |
-| SeaweedFS filer | <http://localhost:8888/buckets/> | none | browse bronze Parquet files, Iceberg metadata, LGTM objects |
-| SeaweedFS master | <http://localhost:9333> | none | volumes, disk usage |
+| RustFS console | <http://localhost:9001> | `medallion` / `medallion-dev-secret-key` (the S3 root keys) | browse and download bronze Parquet files, Iceberg metadata, LGTM objects; bucket sizes; IAM users and policies |
 | Kafka Connect REST | <http://localhost:8083/connectors?expand=status> | none | connector and task state, with the stack trace of a failed task |
 | Mimir | <http://localhost:9009/prometheus/api/v1/rules> | none | which alert rules are loaded |
 | Spark UI | only while a run is active (see below) | | stages, SQL plans of the running Pipeline |
@@ -79,7 +78,7 @@ All are in the Grafana folder **Medallion**, generated from [`infra/k8s/dashboar
 | **Pipeline** | How are the runs going? How fresh is silver/gold? | *Last run*, *Freshness and lag*, *Run history* (with links to each run's logs and trace) |
 | **CDC & Kafka** | Is MongoDB being captured, and is bronze being written? | connector status tiles, *CDC lag*, *Consumer-group lag* |
 | **Source** | Is the seeder writing? Is MongoDB healthy? | *Writes / s*, *Replica set state*, seeder logs |
-| **Storage & query** | Are SeaweedFS, Lakekeeper and StarRocks healthy? | S3 requests by bucket, StarRocks up/errors |
+| **Storage & query** | Are RustFS, Lakekeeper and StarRocks healthy? | S3 requests by API, stored bytes by bucket, StarRocks up/errors |
 | **Gold Metrics** | What do the Gold Metrics say right now? (the business view, read straight from StarRocks) | users by country × status, daily signups |
 | **Kubernetes** | Which pod is restarting, OOM-killed, or near its memory limit? | *Pods* table, *Memory used / limit* |
 
@@ -100,7 +99,7 @@ make mongo-shell
 make consume                                          # first 10 events from the beginning
 
 # 3. Bronze: within ~15 s (offset.flush.interval.ms) a new Parquet file appears in
-#    http://localhost:8888/buckets/bronze/topics/cdc.app.users/dt=<today>/hr=<UTC hour>/
+#    the RustFS console (http://localhost:9001) › bronze › topics/cdc.app.users/dt=<today>/hr=<UTC hour>/
 #    named cdc.app.users-<partition>-<start_offset>.parquet
 
 # 4. Silver: run the Pipeline, then read the row (StarRocks reads Iceberg through the lakehouse catalog)
@@ -130,20 +129,23 @@ Each component lists what it does, how to check it, what healthy looks like and 
 - **Images:** `medallion/kafka-connect:dev`, `medallion/spark:dev` and `medallion/seeder:dev` are built locally and pushed into the nodes with `kind load`. `ErrImageNeverPull`/`ImagePullBackOff` on one of them → `make images`. After rebuilding, `make restart-apps` (the `:dev` tag doesn't change, so running pods keep the old image).
 - **Context:** every script refuses to run unless `kubectl` points at `kind-medallion`.
 
-### SeaweedFS
+### RustFS
 
-Object storage for everything (S3 API on `seaweedfs-s3.data:8333`, path-style). Buckets: `bronze silver gold loki tempo mimir`.
+Object storage for everything: RustFS 1.0.4, single node and single drive ([ADR-0007](../adr/0007-rustfs-object-storage.md)). S3 API on `rustfs.data:9000` (path-style), web console on `:9001`. Buckets: `bronze silver gold loki tempo mimir`. Two identities: the root keys `S3_ACCESS_KEY`/`S3_SECRET_KEY` (every client), and the IAM user `lakekeeper` (policy `silver-warehouse`, silver bucket only) that Lakekeeper vends credentials from.
 
-- **Check:**
+- **Check:** S3 needs signed requests (there is no anonymous listing), so use curl's `--aws-sigv4`:
   ```bash
-  kubectl -n data exec seaweedfs-0 -- sh -c 'echo s3.bucket.list | weed shell -master=localhost:9333 -filer=localhost:8888'
+  kubectl -n data run s3ls --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- \
+    curl -s --aws-sigv4 aws:amz:us-east-1:s3 --user medallion:medallion-dev-secret-key \
+    http://rustfs.data.svc.cluster.local:9000/          # ListBuckets XML: six <Name> entries
   ```
-  Or browse <http://localhost:8888/buckets/>. *Platform health › SeaweedFS (S3)* must be UP.
-- **Healthy:** all six buckets exist. *Storage & query › S3 requests by bucket* shows `bronze` traffic every ~15 s while the seeder runs.
+  Or log in to the console (<http://localhost:9001>). *Platform health › RustFS (S3)* must be UP. That tile is the pod's readiness (`/health/ready`), not a scrape: RustFS pushes its metrics over OTLP to Alloy (`job="rustfs"` in Mimir) and has no `/metrics` endpoint.
+- **Healthy:** all six buckets exist. *Storage & query › S3 requests by API* shows `PutObject` every ~15 s while the seeder runs (the bronze sink).
 - **Failures:**
-  - `AccessDenied` / `SignatureDoesNotMatch` in a client's logs → the client's keys differ from `infra/dev.env`. The identity is rendered from the Secret at pod start, so after changing keys run `make secrets` and restart `seaweedfs-0` *and* the clients.
-  - `NoSuchBucket` → the bucket Job didn't finish: `kubectl -n data logs job/seaweedfs-buckets`, then `make storage` to rerun it.
-  - "no free volumes" in `seaweedfs-0` logs → raise `-volume.max` in `infra/k8s/seaweedfs/seaweedfs.yaml`.
+  - `AccessDenied` / `SignatureDoesNotMatch` in a client's logs → the client's keys differ from `infra/dev.env`. RustFS reads its root keys from the Secret at start, so after changing keys run `make secrets` and restart `rustfs-0` *and* the clients.
+  - `NoSuchBucket`, or Lakekeeper can't vend → the init Job didn't finish: `kubectl -n data logs job/rustfs-init`, then `make storage` to rerun it (it is idempotent).
+  - `rustfs-0` not ready → `kubectl -n data logs rustfs-0` (JSON lines; look for `"level":"ERROR"`). `permission denied` on `/data` means the volume isn't writable by UID 10001 (`fsGroup` in `infra/k8s/rustfs/rustfs.yaml`).
+  - The *Storage & query* RustFS panels say *No data* but the tile is UP → metrics aren't reaching Alloy: `make up-core` has no Alloy (expected), or check `RUSTFS_OBS_METRIC_ENDPOINT` in the manifest.
 
 ### MongoDB
 
@@ -188,8 +190,8 @@ Turns MongoDB change streams into Change Events on `cdc.app.users` (`capture.mod
 - **Check:**
   ```bash
   kubectl -n kafka get kafkaconnector                                       # READY True
-  kubectl -n kafka exec medallion-dual-role-0 -c kafka -- curl -s \
-    medallion-connect-connect-api:8083/connectors/mongo-source/status       # or Kafka UI › Kafka Connect
+  kubectl -n kafka exec medallion-connect-connect-0 -- curl -s \
+    localhost:8083/connectors/mongo-source/status                           # or Kafka UI › Kafka Connect
   ```
 - **Healthy:** state RUNNING with 1 task, *Snapshot completed* = YES, *CDC lag* under a few seconds, *Change Events seen / s* ≈ the seeder's write rate.
 - **What a Change Event looks like** (`make consume`): `op` is `r` (snapshot), `c`, `u` or `d`; `after` is a **JSON string**; `source.ts_ms` is MongoDB's wall-clock time and `source.ord` the oplog increment. Together with the Kafka offset they make the Event Position.
@@ -198,7 +200,7 @@ Turns MongoDB change streams into Change Events on `cdc.app.users` (`capture.mod
 
 Writes every Change Event to `s3://bronze/topics/cdc.app.users/dt=YYYY-MM-DD/hr=HH/cdc.app.users-<partition>-<start_offset>.parquet`, append-only, about one file per partition every 15 s. Each file holds `key`, `value`, `offset` and `timestamp`.
 
-- **Check:** the sink consumer group's lag (`connect-bronze-s3-sink`) on *CDC & Kafka*. New files appear under <http://localhost:8888/buckets/bronze/topics/cdc.app.users/>.
+- **Check:** the sink consumer group's lag (`connect-bronze-s3-sink`) on *CDC & Kafka*. New files appear in the RustFS console (<http://localhost:9001>) under `bronze/topics/cdc.app.users/`, and `make status` prints the newest `dt=/hr=` folder and its file count.
 - **Healthy:** the lag rises and falls with each 15 s flush and never climbs steadily. Files are never rewritten.
 - **Note:** `dt=`/`hr=` are when the **connector** wrote the record (wall clock), not when the change happened. The Pipeline never relies on them (it uses offsets, ADR-0002).
 
@@ -215,6 +217,7 @@ Holds the silver tables' metadata (`lakehouse.silver.users`, `lakehouse.silver.p
   - The warehouse is missing → `kubectl -n data logs job/lakekeeper-warehouse`, then `make storage`.
   - Spark fails with `NoSuchNamespaceException`/`404` from the catalog → the warehouse name differs between `pipeline-config` (`ICEBERG_WAREHOUSE`) and Lakekeeper.
   - Spark gets S3 `403` on Iceberg data files while the catalog works → credential vending or remote signing (see the comments in `infra/k8s/lakekeeper/lakekeeper.yaml`). The Spark catalog also sends static keys (`apps/pipeline/common.py`).
+  - Lakekeeper UI says *Storage listing unavailable … no storage credentials* → the warehouse isn't vending: check `"sts-enabled": true` in the warehouse above, that the warehouse uses the `lakekeeper` keys, and that the IAM user exists (`kubectl -n data logs job/rustfs-init` ends with `user lakekeeper -> policy silver-warehouse`). A *network*/*CORS* error instead → `make ui` isn't running, or `/etc/hosts` lacks `127.0.0.1 rustfs.data.svc.cluster.local`.
 
 ### Spark Operator and the Pipeline
 
@@ -302,7 +305,7 @@ Scrapes every pod annotated `prometheus.io/scrape: "true"` and labels its series
    |---|---|---|
    | `ClassNotFoundException` / "Failed to find any class that implements Connector" | the plugin isn't in the image | `make images && make restart-apps` |
    | `Timed out … mongo-0.mongo` / server selection | MongoDB down or not PRIMARY | [MongoDB](#mongodb) |
-   | `AmazonS3Exception` / `403` / `NoSuchBucket` (sink) | wrong keys or missing bucket | [SeaweedFS](#seaweedfs) |
+   | `AmazonS3Exception` / `403` / `NoSuchBucket` (sink) | wrong keys or missing bucket | [RustFS](#rustfs) |
    | `${env:S3_ACCESS_KEY}` appears literally | the config provider isn't set | check `config.providers` in `infra/k8s/kafka/connect.yaml` |
    | `NullPointerException` in the Parquet writer (sink) | a record without a schema | `value.converter.schemas.enable` must be `true` (ADR-0004) |
 3. Restart after fixing (Strimzi annotations):
@@ -331,7 +334,7 @@ Scrapes every pod annotated `prometheus.io/scrape: "true"` and labels its series
    | Step | Common causes |
    |---|---|
    | (before any step) | the driver pod can't start: `kubectl -n processing describe sparkapplication <name>` (image missing, RBAC, webhook). Submission errors are in `kubectl -n processing logs deploy/spark-operator-controller`. |
-   | `bronze_to_silver` | S3 `403`/endpoint errors (s3a or Iceberg S3FileIO keys), Lakekeeper unreachable, an unexpected bronze schema (check one file: SeaweedFS filer › download › `parquet-tools schema`) |
+   | `bronze_to_silver` | S3 `403`/endpoint errors (s3a or Iceberg S3FileIO keys), Lakekeeper unreachable, an unexpected bronze schema (check one file: RustFS console › download › `parquet-tools schema`) |
    | `checks` | a data check failed → [A data check failed](#a-data-check-failed) |
    | `silver_to_gold` | `GoldTotalsMismatch` (gold doesn't add up to silver: a bug; the log shows the numbers), StarRocks unreachable, `Access denied` for `pipeline`, a Stream Load error |
 5. Fix, then `make run-pipeline`. Reruns are safe: the High-Water Mark only advances after a successful MERGE, and a replayed batch is ignored by the Event Position guard.
@@ -350,7 +353,7 @@ Then find the source document in MongoDB (`make mongo-shell`, `db.users.find({_i
 
 ### Gold is stale
 
-*Alert `GoldStale`: gold hasn't been rebuilt for an hour.* The Pipeline only runs when asked: `make run-pipeline`, or `make schedule-on` for every 10 minutes. With the schedule on, check `kubectl -n processing get scheduledsparkapplication` (`LAST RUN`, `LAST RUN NAME`), then [A Pipeline run failed](#a-pipeline-run-failed).
+*Alert `GoldStale`: gold hasn't been rebuilt for an hour.* The Pipeline runs every minute from `infra/k8s/spark/scheduled-pipeline.yaml` unless someone ran `make schedule-off` (`make status` shows it), plus `make run-pipeline` on demand. Manual runs pause the schedule while they run. With the schedule on, check `kubectl -n processing get scheduledsparkapplication` (`LAST RUN`, `LAST RUN NAME`), then [A Pipeline run failed](#a-pipeline-run-failed).
 
 ### Silver does not match MongoDB
 
@@ -417,7 +420,7 @@ Pipeline gauges describe the **last run**. They are emitted over OTLP, and Alloy
 | `medallion_seeder_writes_total` | `op` | seeder writes (a counter) |
 | `medallion_seeder_source_users` | | live Users in MongoDB |
 
-Platform metrics used by the dashboards: `up{component=…}`, `debezium_metrics_*` (e.g. `millisecondsbehindsource`, `snapshotcompleted`, `totalnumberofeventsseen`), `kafka_connect_connector_status{connector,status}`, `kafka_connect_*_task_*`, `kafka_topic_partition_current_offset`, `kafka_consumergroup_lag`, `starrocks_fe_*`, `starrocks_be_*`, `SeaweedFS_s3_request_total`, `container_*` (cAdvisor), `kube_pod_*` (kube-state-metrics), and `ALERTS`.
+Platform metrics used by the dashboards: `up{component=…}`, `debezium_metrics_*` (e.g. `millisecondsbehindsource`, `snapshotcompleted`, `totalnumberofeventsseen`), `kafka_connect_connector_status{connector,status}`, `kafka_connect_*_task_*`, `kafka_topic_partition_current_offset`, `kafka_consumergroup_lag`, `starrocks_fe_*`, `starrocks_be_*`, `rustfs_api_requests_total{name}` and `rustfs_bucket_usage_usage_bytes{bucket}` (pushed by RustFS over OTLP), `container_*` (cAdvisor), `kube_pod_*` and `kube_statefulset_status_replicas_ready` (kube-state-metrics), and `ALERTS`.
 
 ## Query cheat-sheet
 

@@ -93,7 +93,7 @@
         <p>Every local piece was chosen because it has an AWS counterpart:</p>
         <div class="badge-list">
           <div class="badge-item"><code class="badge-code">kind</code><span class="badge-desc">→ Amazon EKS (managed Kubernetes)</span></div>
-          <div class="badge-item"><code class="badge-code">SeaweedFS</code><span class="badge-desc">→ Amazon S3, with IRSA for credentials</span></div>
+          <div class="badge-item"><code class="badge-code">RustFS</code><span class="badge-desc">→ Amazon S3, with IRSA for credentials</span></div>
           <div class="badge-item"><code class="badge-code">Strimzi + Connect</code><span class="badge-desc">→ Amazon MSK + MSK Connect, or Strimzi on EKS</span></div>
           <div class="badge-item"><code class="badge-code">Lakekeeper</code><span class="badge-desc">→ AWS Glue Data Catalog</span></div>
           <div class="badge-item"><code class="badge-code">Spark Operator</code><span class="badge-desc">→ EMR on EKS</span></div>
@@ -112,9 +112,9 @@
         <h2 class="screen-heading">Test the risky assumptions first</h2>
         <p>Before building the whole thing, the plan starts with four small <span class="term" data-definition="A spike is a short, throwaway experiment to answer one risky question (does X actually work?) before you commit to building on it.">spikes</span>. Any of these failing changes the design:</p>
         <div class="step-cards">
-          <div class="step-card"><div class="step-num">a</div><div class="step-body"><strong>Aiven sink on Kafka 4.3</strong><p>Parquet output, S3 path-style requests to SeaweedFS, and the <code>dt=/hr=</code> folder layout.</p></div></div>
+          <div class="step-card"><div class="step-num">a</div><div class="step-body"><strong>Aiven sink on Kafka 4.3</strong><p>Parquet output, S3 path-style requests to RustFS, and the <code>dt=/hr=</code> folder layout.</p></div></div>
           <div class="step-card"><div class="step-num">b</div><div class="step-body"><strong>The MERGE adds New Attribute columns by itself</strong><p>Spark 4.1 + Iceberg 1.12 adding a <code>phone</code> column with no manual change.</p></div></div>
-          <div class="step-card"><div class="step-num">c</div><div class="step-body"><strong>StarRocks shared-data on SeaweedFS</strong><p>Plus the Spark connector writing a staging table that is then swapped in.</p></div></div>
+          <div class="step-card"><div class="step-num">c</div><div class="step-body"><strong>StarRocks shared-data on RustFS</strong><p>Plus the Spark connector writing a staging table that is then swapped in.</p></div></div>
           <div class="step-card"><div class="step-num">d</div><div class="step-body"><strong>Mimir as one pod</strong><p>No official single-binary chart exists.</p></div></div>
         </div>
       </section>

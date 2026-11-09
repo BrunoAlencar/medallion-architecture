@@ -52,7 +52,7 @@ Observability (namespace observability): Alloy (metrics scrape + pod logs + OTLP
 | Area | Choice / pin |
 |---|---|
 | Cluster | kind v0.33.0 (node v1.37), kubectl 1.37, Helm 3.22.1 |
-| Object storage | **SeaweedFS** (S3 API, path-style). Buckets: `bronze silver gold loki tempo mimir`. Pin the chart version at implementation time. |
+| Object storage | **SeaweedFS** (S3 API, path-style); replaced by RustFS 1.0.4 in [ADR-0007](docs/adr/0007-rustfs-object-storage.md). Buckets: `bronze silver gold loki tempo mimir`. Pin the chart version at implementation time. |
 | Source | MongoDB 8.0 StatefulSet, single-node replica set + `rs.initiate` Job, plus a percona mongodb_exporter v0.54.0 sidecar |
 | Kafka | Strimzi 1.3.1 (`v1` CRDs only), Kafka 4.3.2, 1 KRaft node pool, Strimzi-managed Kafka Exporter |
 | Connect | Custom image `FROM quay.io/strimzi/kafka:1.3.1-kafka-4.3.2` + Debezium MongoDB 3.7.0.Final + Aiven S3 sink connector (Apache-2.0; pin at implementation). `JsonConverter` with `schemas.enable=true`, **no Schema Registry**. Loaded with `kind load`. |

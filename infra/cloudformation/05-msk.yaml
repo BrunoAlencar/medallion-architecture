@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Medallion production - Amazon MSK. Replaces the single-broker Strimzi Kafka: 3 brokers across 3
+  AZs, KRaft, IAM authentication only (no passwords; Kafka Connect authenticates with its IRSA
+  role), TLS everywhere, KMS at rest. Kafka Connect itself stays on EKS (Strimzi) and points here.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+  KafkaVersion:
+    Type: String
+    Default: 4.1.x.kraft
+    Description: >-
+      Newest version MSK offers on Standard brokers (4.2.x is Express-only). Check what your
+      Region offers with: aws kafka list-kafka-versions
+  BrokerInstanceType:
+    Type: String
+    Default: kafka.m7g.large
+  BrokerVolumeGiB:
+    Type: Number
+    Default: 500
+    MinValue: 10
+    Description: Per broker. Size for (write rate x retention x replication factor 3) / 3 brokers, plus headroom.
+  LogRetentionHours:
+    Type: Number
+    Default: 168
+    Description: >-
+      How long Change Events stay in Kafka. Must cover the longest outage of the bronze sink you
+      want to recover from without re-snapshotting MongoDB (bronze is the durable copy).
+
+Resources:
+  BrokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${EnvName} medallion MSK brokers"
+      VpcId: {"Fn::ImportValue": !Sub "${EnvName}-medallion-VpcId"}
+      SecurityGroupIngress:
+        - Description: Kafka clients on EKS (SASL/IAM over TLS)
+          IpProtocol: tcp
+          FromPort: 9098
+          ToPort: 9098
+          SourceSecurityGroupId: {"Fn::ImportValue": !Sub "${EnvName}-medallion-ClusterSecurityGroupId"}
+        - Description: Open monitoring (JMX + node exporter) scraped by Alloy on EKS
+          IpProtocol: tcp
+          FromPort: 11001
+          ToPort: 11002
+          SourceSecurityGroupId: {"Fn::ImportValue": !Sub "${EnvName}-medallion-ClusterSecurityGroupId"}
+      Tags:
+        - {Key: Name, Value: !Sub "${EnvName}-medallion-msk"}
+
+  BrokerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/msk/${EnvName}-medallion"
+      RetentionInDays: 30
+
+  # The local kafka.yaml runs with replication factor 1; production needs 3 / min ISR 2 so one
+  # broker (or AZ) can fail without losing acknowledged Change Events.
+  BrokerConfiguration:
+    Type: AWS::MSK::Configuration
+    Properties:
+      Name: !Sub "${EnvName}-medallion"
+      KafkaVersionsList: [!Ref KafkaVersion]
+      ServerProperties: !Sub |
+        auto.create.topics.enable=false
+        default.replication.factor=3
+        min.insync.replicas=2
+        num.partitions=3
+        unclean.leader.election.enable=false
+        log.retention.hours=${LogRetentionHours}
+
+  Cluster:
+    Type: AWS::MSK::Cluster
+    Properties:
+      ClusterName: !Sub "${EnvName}-medallion"
+      KafkaVersion: !Ref KafkaVersion
+      NumberOfBrokerNodes: 3
+      BrokerNodeGroupInfo:
+        InstanceType: !Ref BrokerInstanceType
+        ClientSubnets: !Split [",", {"Fn::ImportValue": !Sub "${EnvName}-medallion-PrivateSubnetIds"}]
+        SecurityGroups: [!Ref BrokerSecurityGroup]
+        StorageInfo:
+          EBSStorageInfo: {VolumeSize: !Ref BrokerVolumeGiB}
+      ClientAuthentication:
+        Sasl: {Iam: {Enabled: true}}
+        Unauthenticated: {Enabled: false}
+      EncryptionInfo:
+        EncryptionAtRest:
+          DataVolumeKMSKeyId: {"Fn::ImportValue": !Sub "${EnvName}-medallion-DataKeyArn"}
+        EncryptionInTransit: {ClientBroker: TLS, InCluster: true}
+      ConfigurationInfo:
+        Arn: !GetAtt BrokerConfiguration.Arn
+        Revision: !GetAtt BrokerConfiguration.LatestRevision.Revision
+      EnhancedMonitoring: PER_TOPIC_PER_BROKER
+      OpenMonitoring:
+        Prometheus:
+          JmxExporter: {EnabledInBroker: true}
+          NodeExporter: {EnabledInBroker: true}
+      LoggingInfo:
+        BrokerLogs:
+          CloudWatchLogs: {Enabled: true, LogGroup: !Ref BrokerLogGroup}
+
+Outputs:
+  MskClusterArn:
+    Description: Bootstrap servers - aws kafka get-bootstrap-brokers --cluster-arn <this> (BootstrapBrokerStringSaslIam)
+    Value: !Ref Cluster
+    Export: {Name: !Sub "${EnvName}-medallion-MskClusterArn"}
+  MskClusterName:
+    Value: !Sub "${EnvName}-medallion"
+    Export: {Name: !Sub "${EnvName}-medallion-MskClusterName"}
+  BrokerSecurityGroupId:
+    Value: !Ref BrokerSecurityGroup
