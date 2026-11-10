@@ -45,8 +45,9 @@ _EXTENDED_JSON_SCALARS = {
 }
 
 # <anything>-<partition>-<start_offset>[.ext...] as written by the Aiven sink file.name.template.
-_BRONZE_FILE_RE = re.compile(r"-(\d+)-(\d+)(?:\.[A-Za-z0-9]+)*$")
+# One pattern, used by Python here and by Spark's regexp_extract in bronze_to_silver.
 BRONZE_FILE_REGEX_FOR_SPARK = r"-(\d+)-(\d+)(?:\.[A-Za-z0-9]+)*$"
+_BRONZE_FILE_RE = re.compile(BRONZE_FILE_REGEX_FOR_SPARK)
 
 
 # --------------------------------------------------------------------------------------------

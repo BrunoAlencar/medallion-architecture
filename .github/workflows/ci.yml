@@ -1,0 +1,39 @@
+# Runs `make check` (the same command as on a laptop) on every push to main and every pull request.
+# Here PySpark and Java are installed, so the Spark tests in apps/pipeline/tests run too.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            apps/pipeline/requirements*.txt
+      # PySpark 4.1 runs on Java 17, like the apache/spark base image of images/spark/Dockerfile.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install the dev tools and PySpark
+        run: make venv-spark PYTHON_BOOTSTRAP=python
+      - name: Lint and test
+        run: make check

@@ -1,0 +1,24 @@
+# Tool configuration only: this repo is not an installable package.
+# `make venv` installs the tools, `make check` runs them all.
+
+[tool.pytest.ini_options]
+# `apps/pipeline/tests`: the Pipeline's rules (pure Python) and its Spark steps (skipped without PySpark).
+# `tests`: cross-file contracts (manifests, Dockerfiles, dashboards and code that must agree).
+testpaths = ["apps/pipeline/tests", "tests"]
+# Makes `import apps.pipeline...` work from any directory, without sys.path edits in conftest.py.
+pythonpath = ["."]
+
+[tool.ruff]
+# The pure rules and the contract tests must keep running on the stock macOS Python (3.9).
+# The Spark steps need Python >= 3.10 (PySpark 4.1).
+target-version = "py39"
+line-length = 140
+extend-exclude = ["course"]
+
+[tool.ruff.lint]
+# E/W: style errors, F: unused names and undefined variables, I: import order, B: likely bugs.
+select = ["E", "F", "W", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# PromQL, LogQL and SQL are kept on one line each, so a query can be copied into Grafana as is.
+"infra/k8s/dashboards/generate_dashboards.py" = ["E501"]

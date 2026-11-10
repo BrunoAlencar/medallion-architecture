@@ -720,13 +720,16 @@ BOARDS = {
 }
 
 
+def render_boards() -> Dict[str, str]:
+    """{file name: JSON text} of every dashboard. tests/test_repo_contracts.py compares it with the files."""
+    return {filename: json.dumps(build().to_json(), indent=2) + "\n" for filename, build in BOARDS.items()}
+
+
 def main() -> None:
-    for filename, build in BOARDS.items():
-        board = build().to_json()
+    for filename, text in render_boards().items():
         with open(os.path.join(OUT_DIR, filename), "w") as fh:
-            json.dump(board, fh, indent=2)
-            fh.write("\n")
-        print(f"wrote {filename}: {len(board['panels'])} panels")
+            fh.write(text)
+        print(f"wrote {filename}: {len(json.loads(text)['panels'])} panels")
 
 
 if __name__ == "__main__":

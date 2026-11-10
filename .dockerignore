@@ -1,7 +1,12 @@
 **/__pycache__
 **/.pytest_cache
 **/*.pyc
+.git
+.github
+.venv
+venv
+.ruff_cache
 course
 docs
 infra
-.git
+tests

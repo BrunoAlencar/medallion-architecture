@@ -10,6 +10,12 @@ WAIT         ?= 900s
 NAMESPACES   := kafka data processing observability
 IMAGES       := medallion/kafka-connect:dev medallion/spark:dev medallion/seeder:dev
 
+# Dev tools. `make venv` creates $(VENV); once it exists, every target that runs Python uses it.
+VENV         ?= .venv
+PYTHON       ?= $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python3)
+SHELLCHECK   ?= $(if $(wildcard $(VENV)/bin/shellcheck),$(VENV)/bin/shellcheck,shellcheck)
+SHELL_SCRIPTS := scripts/*.sh infra/cloudformation/deploy.sh course/build.sh
+
 include infra/dev.env
 export
 
@@ -147,7 +153,7 @@ observability: ## Mimir, Loki, Tempo, kube-state-metrics, Alloy, Grafana, dashbo
 
 .PHONY: dashboards
 dashboards: ## Regenerate dashboards from code and load them into Grafana (ConfigMaps)
-	python3 infra/k8s/dashboards/generate_dashboards.py
+	$(PYTHON) infra/k8s/dashboards/generate_dashboards.py
 	@for f in infra/k8s/dashboards/*.json; do \
 	  name="dashboard-$$(basename $$f .json)"; \
 	  $(KUBECTL) -n observability create configmap $$name --from-file=$$f --dry-run=client -o yaml \
@@ -254,14 +260,35 @@ aws-lint: ## Lint the CloudFormation templates (needs cfn-lint: pipx install cfn
 aws-deploy: ## Deploy the AWS layer with CloudFormation (ENV=prod AWS_REGION=... [REVIEW=1] [STACKS="eks msk"])
 	infra/cloudformation/deploy.sh $(STACKS)
 
-##@ Tests
+##@ Tests and checks
+# The newest Python on PATH. PySpark 4.1 (venv-spark) needs >= 3.10; everything else runs on 3.9.
+PYTHON_BOOTSTRAP ?= $(shell command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3.10 || command -v python3)
+
+.PHONY: venv
+venv: ## Create .venv with the dev tools: pytest, ruff, shellcheck, PyYAML (PYTHON_BOOTSTRAP=python3.x to choose)
+	$(PYTHON_BOOTSTRAP) -m venv $(VENV)
+	$(VENV)/bin/python -m pip install --quiet --disable-pip-version-check -r requirements-dev.txt
+	@echo "✔ $(VENV) ready ($$($(VENV)/bin/python --version)). Next: make check"
+
+.PHONY: venv-spark
+venv-spark: venv ## Add PySpark and the Pipeline's libraries to .venv, for test-spark (Python >= 3.10, Java 17)
+	$(VENV)/bin/python -m pip install --quiet --disable-pip-version-check -r apps/pipeline/requirements-dev.txt
+
+.PHONY: check
+check: lint test ## Everything that needs no cluster: lint + tests. Run it before every commit (CI runs the same)
+
+.PHONY: lint
+lint: ## Lint Python (ruff) and the shell scripts (shellcheck)
+	$(PYTHON) -m ruff check .
+	$(SHELLCHECK) --severity=warning $(SHELL_SCRIPTS)
+
 .PHONY: test
-test: ## Unit tests (rules only; no Spark needed)
-	python3 -m pytest apps/pipeline/tests -q
+test: ## Pipeline rules + cross-file contracts (pure Python); the Spark tests too when PySpark is installed
+	$(PYTHON) -m pytest -q
 
 .PHONY: test-spark
-test-spark: ## Unit + Spark tests (needs Python >= 3.10, Java 17, pip install -r apps/pipeline/requirements-dev.txt)
-	python3 -m pytest apps/pipeline/tests -q -rs
+test-spark: ## Same, and list every skipped test (run `make venv-spark` first; needs Java 17)
+	$(PYTHON) -m pytest -q -rs
 
 .PHONY: lint-manifests
 lint-manifests: ## Server-side dry-run of every manifest against the cluster

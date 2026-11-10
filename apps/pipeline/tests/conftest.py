@@ -1,12 +1,8 @@
 import os
-import sys
 
 import pytest
 
-# Make `import apps.pipeline...` work when pytest runs from the repo root or from apps/pipeline.
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+# `import apps.pipeline...` works from any directory: pyproject.toml puts the repo root on sys.path.
 
 ICEBERG_PACKAGE = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.12.0"
 
@@ -18,7 +14,7 @@ def spark(tmp_path_factory):
     Needs PySpark 4.1, Java 17+ and network access to Maven Central the first time
     (spark.jars.packages). Skipped when PySpark is not installed.
     """
-    pyspark = pytest.importorskip("pyspark")
+    pytest.importorskip("pyspark")
     from pyspark.sql import SparkSession
 
     warehouse = tmp_path_factory.mktemp("warehouse")

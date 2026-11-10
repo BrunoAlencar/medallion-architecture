@@ -3,7 +3,9 @@
 **MongoDB (Users) → Debezium CDC → Kafka → bronze (append-only Parquet) → silver (Iceberg) → gold (StarRocks)**, transformed by one PySpark Pipeline on the Spark Operator. The whole platform, observability included, runs on a local kind cluster shaped like EKS.
 
 - Plan and settled behaviour: [PLAN.md](PLAN.md) · domain words: [GLOSSARY.md](GLOSSARY.md) · decisions: [docs/adr/](docs/adr/)
+- **Learning each component, one chapter at a time: [docs/tutorial/](docs/tutorial/README.md)**
 - **Checking and debugging each component: [docs/how-to/operate-and-debug.md](docs/how-to/operate-and-debug.md)**
+- **Changing something (a Gold Metric, a check, a version): [docs/how-to/change-the-platform.md](docs/how-to/change-the-platform.md)**
 - Going to production on AWS (CloudFormation in [infra/cloudformation/](infra/cloudformation/)): [docs/how-to/deploy-to-production.md](docs/how-to/deploy-to-production.md)
 
 ```
@@ -64,11 +66,13 @@ The Pipeline also runs **every minute** on its own (a ScheduledSparkApplication,
 
 ```
 Makefile                              every operation (make help)
+pyproject.toml requirements-dev.txt   lint and test configuration, dev tools (make venv, make check)
 apps/pipeline/                        the PySpark Pipeline
   transform.py                          pure rules: Event Position winner, delete is final, flattening/New Attributes, HWM file selection
   bronze_to_silver.py checks.py silver_to_gold.py verify.py run_pipeline.py
   telemetry.py                          OTLP traces + gauges, logs tagged run_id/step/trace_id
   tests/                                rules (no Spark needed) + Spark/Iceberg tests (local catalog)
+tests/test_repo_contracts.py          cross-file contracts: manifests, Dockerfiles, dashboards and code that must agree
 apps/seeder/seed_users.py             Faker Users, waits for the Debezium snapshot, then changes; New Attributes on demand
 images/{kafka-connect,spark,seeder}/  Dockerfiles (loaded into kind)
 infra/kind/                           cluster config
@@ -76,15 +80,25 @@ infra/helm/                           values for Strimzi, StarRocks operator, Sp
 infra/k8s/                            namespaces, rustfs, lakekeeper, mongo, kafka, starrocks, spark, seeder, mimir, alerts, dashboards
 infra/dev.env                         local-only credentials → Secret medallion-credentials
 scripts/                              run-pipeline, status, ui, verify, replay-test, scenario-new-attribute
+docs/tutorial/                        14 chapters, one per component, with exercises and questions
 docs/how-to/operate-and-debug.md      component checklist, runbooks, metrics and query reference
+docs/how-to/change-the-platform.md    recipes: what to edit for each kind of change, and which test guards it
+.github/workflows/ci.yml              runs `make check` on every push and pull request
 ```
 
-## Tests
+## Tests and checks
 
 ```bash
-make test         # Pipeline rules: winner, delete is final, replay guard, flattening, HWM file selection (pure Python)
-make test-spark   # + Spark tests against a local Iceberg catalog (Python ≥ 3.10, Java 17, pip install -r apps/pipeline/requirements-dev.txt)
+make venv         # once: .venv with pytest, ruff, shellcheck and PyYAML (any Python >= 3.9)
+make check        # lint + every test that needs no cluster (~2 s). CI runs the same command.
 ```
+
+| Layer | Command | Covers |
+|---|---|---|
+| Pipeline rules | `make test` | winner, delete is final, replay guard, flattening, HWM file selection (pure Python) |
+| Cross-file contracts | `make test` | topic names, bronze file names, Spark specs, version pins, metric names, alert runbooks, dashboards vs their generator |
+| Spark steps | `make venv-spark && make test-spark` | the same rules against a local Iceberg catalog (Python >= 3.10, Java 17). Skipped when PySpark is missing; CI always runs them |
+| The running platform | `make status`, `make verify`, `make replay-test` | a cluster |
 
 ## Mapping to EKS
 
