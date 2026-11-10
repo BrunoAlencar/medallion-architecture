@@ -13,6 +13,7 @@ Exit code 0 = success, 1 = failure (the SparkApplication then shows FAILED).
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -26,8 +27,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from apps.pipeline.config import PipelineConfig  # noqa: E402
 from apps.pipeline.telemetry import Telemetry, setup_logging  # noqa: E402
-
-import logging  # noqa: E402
 
 log = logging.getLogger("medallion.pipeline")
 

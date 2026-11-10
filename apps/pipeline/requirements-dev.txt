@@ -1,5 +1,6 @@
-# Local unit tests. test_transform.py needs only pytest; test_spark_steps.py also needs PySpark 4.1
-# (Python >= 3.10, Java 17+) and downloads the Iceberg runtime from Maven Central on first run.
+# Everything needed to run the Spark tests locally (`make venv-spark`, then `make test-spark`).
+# test_spark_steps.py needs PySpark 4.1 (Python >= 3.10, Java 17+) and downloads the Iceberg runtime
+# from Maven Central on first run. The pure tests need only ../../requirements-dev.txt (`make venv`).
 -r requirements.txt
-pytest==8.3.3
+-r ../../requirements-dev.txt
 pyspark==4.1.4

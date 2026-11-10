@@ -1,0 +1,8 @@
+# Developer tools for the whole repo: `make venv` installs them into .venv, `make check` runs them.
+# Works on Python >= 3.9. The Spark tests need more: apps/pipeline/requirements-dev.txt (`make venv-spark`).
+pytest==8.3.3
+ruff==0.17.4
+# The shellcheck binary, packaged for pip, so `make lint` needs no brew install.
+shellcheck-py==0.11.0.1
+# Reads the manifests in tests/test_repo_contracts.py.
+PyYAML==6.0.3

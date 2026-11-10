@@ -402,7 +402,7 @@ Pipeline gauges describe the **last run**. They are emitted over OTLP, and Alloy
 | Metric | Labels | Meaning |
 |---|---|---|
 | `medallion_pipeline_last_run_success` | | 1 = the last run succeeded |
-| `medallion_pipeline_last_run_timestamp_seconds` / `…_last_success_timestamp_seconds` | | when it finished / last succeeded |
+| `medallion_pipeline_last_run_timestamp_seconds`, `medallion_pipeline_last_success_timestamp_seconds` | | when it finished / last succeeded |
 | `medallion_pipeline_run_duration_seconds` | | duration of the whole run |
 | `medallion_pipeline_step_duration_seconds` | `step` | duration of each step |
 | `medallion_bronze_files`, `medallion_bronze_files_selected` | | files in bronze / files read this run |
