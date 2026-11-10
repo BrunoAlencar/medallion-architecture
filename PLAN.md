@@ -1,5 +1,11 @@
 # Medallion CDC POC on local Kubernetes (kind) with PySpark
 
+> **This is the original plan, kept as a record.** Two decisions made later override parts of it:
+> RustFS replaced SeaweedFS ([ADR-0007](docs/adr/0007-rustfs-object-storage.md)), and the three steps run as one
+> SparkApplication, not three ([ADR-0006](docs/adr/0006-one-spark-application-and-s3a-bronze.md)).
+> Where this file and the code disagree, the code and the ADRs are right. For how each component
+> works today, read the [tutorial](docs/tutorial/README.md).
+
 ## Context
 This is a proof-of-concept data platform on a local kind cluster that resembles EKS:
 **MongoDB (Users) → Debezium CDC → Kafka → bronze (append-only Parquet) → silver (Iceberg) → gold (StarRocks)**.
